@@ -44,22 +44,34 @@ impl Drop for Scratch {
     }
 }
 
-/// Headings from earlier briefings still inside the window. A refresh sees
-/// posts, not what it already told you, so without this a running story gets
-/// the same section again every twenty minutes.
+/// How many past headings the prompt can carry.
 const MAX_COVERED: usize = 40;
 
-/// `span` says what stretch of the timeline the posts cover — the whole
-/// window on a first run, only what arrived since the last briefing on a
-/// refresh. It goes in the prompt so the model pitches the briefing right.
-///
-/// `covered` names the stories earlier briefings already told, newest first.
-pub fn build_prompt(tweets: &[Tweet], span: &str, covered: &[String], lang: &str) -> String {
+/// The heading suffix that marks a story the reader has not seen. Both front
+/// ends strip it and draw a badge instead.
+pub const NEW_MARK: &str = " [new]";
+
+/// The briefing the reader already has, so the next one can mark what changed.
+pub struct Previous<'a> {
+    /// Local clock time, for the prompt to name.
+    pub at: &'a str,
+    pub headings: &'a [String],
+}
+
+/// One briefing of the whole window. Every refresh rewrites it, so there is
+/// always exactly one thing to read; `previous` is what the reader already
+/// saw, and the sections that are not in it get marked.
+pub fn build_prompt(
+    tweets: &[Tweet],
+    hours: i64,
+    previous: Option<Previous>,
+    lang: &str,
+) -> String {
     let sample: String = tweets.iter().map(format_tweet).collect();
-    let already = covered_section(covered);
+    let already = previous.map_or(String::new(), marking_section);
 
     format!(
-        "Below are {count} posts from my X timeline, {span}, newest first. \
+        "Below are {count} posts from my X timeline, covering the last {hours} hours, newest first. \
 Write my briefing in {lang}.\n\n\
 Exact format, nothing else. One section per story, where a story is one \
 event, one launch, one announcement, one controversy:\n\
@@ -91,23 +103,30 @@ Now write the briefing. Start with the first `## ` heading.",
     )
 }
 
-/// The "you already said this" block, empty on a first briefing.
-fn covered_section(covered: &[String]) -> String {
-    if covered.is_empty() {
+/// The "mark what I have not seen" block, empty on a first briefing.
+fn marking_section(previous: Previous) -> String {
+    if previous.headings.is_empty() {
         return String::new();
     }
-    let list: String = covered
+    let list: String = previous
+        .headings
         .iter()
         .take(MAX_COVERED)
         .map(|h| format!("- {h}\n"))
         .collect();
+    let at = previous.at;
 
     format!(
-        "I have already read a briefing today covering these stories:\n{list}\n\
-Skip a story on that list. Write about it only if something actually \
-happened since — a new fact, a reaction that changes it, a next step — and \
-then write only what is new, never the background I already have. \
-If nothing moved, leave it out entirely, out of Also too.\n\n"
+        "At {at} I read a briefing of this same timeline. It covered these stories:\n\
+{list}\n\
+Check every heading you write against that list. A story on the list gets \
+nothing, ever: not when you word its heading differently, not when you copy \
+its heading exactly, not when fresh posts have piled onto it. Only a story \
+absent from the list is new, and its heading ends with \"{NEW_MARK}\" — exactly \
+those characters, in English, whatever the language of the briefing. Write \
+\"{NEW_MARK}\" nowhere else: never in Also, never inside a sentence. Most \
+sections will carry no mark, and that is the expected shape.\n\n",
+        NEW_MARK = NEW_MARK.trim()
     )
 }
 
@@ -294,29 +313,29 @@ mod tests {
 
     #[test]
     fn the_prompt_carries_the_count_and_the_language() {
-        let prompt = build_prompt(
-            &[tweet("alice", "hi")],
-            "covering the last 24 hours",
-            &[],
-            "French",
-        );
+        let prompt = build_prompt(&[tweet("alice", "hi")], 24, None, "French");
         assert!(prompt.contains("Below are 1 posts"));
         assert!(prompt.contains("covering the last 24 hours"));
         assert!(prompt.contains("Write my briefing in French"));
         assert!(prompt.contains("Write every word in French"));
         assert!(prompt.contains("@alice"));
-        assert!(!prompt.contains("already read a briefing"));
+        assert!(!prompt.contains("[new]"));
     }
 
     #[test]
-    fn a_refresh_is_told_which_stories_it_already_reported() {
+    fn a_refresh_is_told_what_the_reader_has_already_seen() {
+        let headings = vec!["ZEVENT franchit douze millions".to_string(), "Astra".to_string()];
         let prompt = build_prompt(
             &[tweet("alice", "hi")],
-            "since my last briefing, 20 minutes ago",
-            &["ZEVENT franchit douze millions".into(), "Astra".into()],
+            24,
+            Some(Previous {
+                at: "00:57",
+                headings: &headings,
+            }),
             "French",
         );
-        assert!(prompt.contains("already read a briefing"));
+        assert!(prompt.contains("At 00:57 I read a briefing"));
         assert!(prompt.contains("- ZEVENT franchit douze millions\n- Astra\n"));
+        assert!(prompt.contains("[new]"));
     }
 }

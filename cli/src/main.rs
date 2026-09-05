@@ -161,10 +161,16 @@ fn feeds(args: &Args) -> Result<Vec<Feed>> {
 /// A briefing built on fewer posts than this is noise, not news.
 const MIN_POSTS: usize = 5;
 
-/// Fetch what is new, keep what is recent, then stream one summary.
+/// A refresh rewrites the whole briefing, which costs a whole summary. Fewer
+/// newly seen posts than this is not worth replacing what you are reading.
+const MIN_NEW_POSTS: usize = 10;
+
+/// Fetch what is new, then rewrite the briefing of the whole window.
 ///
-/// A refresh only has to cover the posts that arrived since the last briefing:
-/// the rest of the window is already on disk, and you already read it.
+/// Only the fetch is incremental: what arrived since the last briefing is all
+/// that needs downloading, and the rest of the window is already on disk. The
+/// briefing itself is always the whole window, so there is one thing to read
+/// rather than a stack of slices, with the stories you have not seen marked.
 #[allow(clippy::too_many_arguments)]
 async fn produce(
     client: Arc<Client>,
@@ -233,42 +239,47 @@ async fn produce(
         store.save_posts(&merged, hours)?;
     }
 
-    // What to summarize is what reached you since the last briefing, not what
+    // What counts as new is what reached you since the last briefing, not what
     // was written since. For You surfaces posts hours late, and judging them by
     // their timestamp throws every one of them away.
+    let fresh = merged
+        .iter()
+        .filter(|c| c.tweet.created_at >= window && c.seen_at > since)
+        .count();
+
     let mut all: Vec<Tweet> = merged
         .into_iter()
-        .filter(|c| c.tweet.created_at >= window && c.seen_at > since)
+        .filter(|c| c.tweet.created_at >= window)
         .map(|c| c.tweet)
         .collect();
     all.truncate(llm::MAX_TWEETS);
 
     if all.len() < MIN_POSTS {
-        // Nothing new is the normal outcome of refreshing twice in a row, not
-        // a failure — leave the briefings already on screen alone.
-        if let Some(previous) = &previous {
-            let _ = tx.send(Update::Status(format!(
-                "nothing new since {}",
-                previous.at.with_timezone(&chrono::Local).format("%H:%M")
-            )));
-            return Ok(());
-        }
         anyhow::bail!(
             "only {} posts in the last {hours}h — try --hours 48 or more --pages",
             all.len()
         );
     }
 
+    // Refreshing twice in a row is normal and should cost nothing. Leave the
+    // briefing on screen, marks and all, rather than rewrite it for six posts.
+    let last_read = previous
+        .as_ref()
+        .map(|b| b.at.with_timezone(&chrono::Local).format("%H:%M").to_string());
+    if let Some(at) = &last_read {
+        if fresh < MIN_NEW_POSTS {
+            let _ = tx.send(Update::Status(format!(
+                "nothing new since {at} · {fresh} posts"
+            )));
+            return Ok(());
+        }
+    }
+
     let fetched = started.elapsed();
     let posts = all.len();
-    let span = match &previous {
-        Some(b) => format!(
-            "since my last briefing, {} ago",
-            humanize(now.signed_duration_since(b.at))
-        ),
-        None => format!("covering the last {hours} hours"),
-    };
-    let _ = tx.send(Update::Status(format!("{posts} posts · {span} · summarizing")));
+    let _ = tx.send(Update::Status(format!(
+        "{posts} posts · last {hours}h · {fresh} new · summarizing"
+    )));
 
     // Most of the generation is thinking, and thinking is not streamed, so
     // nothing arrives for a long stretch. Tick the elapsed seconds meanwhile,
@@ -292,14 +303,16 @@ async fn produce(
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
     let mut text = String::new();
-    // Everything earlier briefings in this window already told you, so the
-    // model reports what moved instead of introducing the same story again.
-    let covered = if cache {
-        store.covered_since(window)
-    } else {
-        Vec::new()
-    };
-    let prompt = llm::build_prompt(&all, &span, &covered, lang);
+    // The briefing the reader already has. Its stories keep their plain
+    // heading; everything else is marked, so a refresh is scannable.
+    let covered = previous
+        .as_ref()
+        .map_or(Vec::new(), |b| store::headings(&b.text));
+    let seen = last_read.as_ref().map(|at| llm::Previous {
+        at,
+        headings: &covered,
+    });
+    let prompt = llm::build_prompt(&all, hours, seen, lang);
     let outcome = llm::stream(&prompt, model, effort, |token| {
         if let Some(handle) = ticker.take() {
             handle.abort();
@@ -333,24 +346,6 @@ async fn produce(
         started.elapsed().as_secs_f64()
     )));
     Ok(())
-}
-
-/// "12 minutes" / "3 hours" — enough for the prompt to say how far back to go.
-fn humanize(gap: chrono::Duration) -> String {
-    let minutes = gap.num_minutes().max(1);
-    if minutes < 90 {
-        return format!("{minutes} minute{}", plural(minutes));
-    }
-    let hours = gap.num_hours();
-    format!("{hours} hour{}", plural(hours))
-}
-
-fn plural(n: i64) -> &'static str {
-    if n == 1 {
-        ""
-    } else {
-        "s"
-    }
 }
 
 /// Page through one feed until it stops bringing posts we do not already have.

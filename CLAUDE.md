@@ -64,24 +64,23 @@ The `features` map in `x.rs` is a separate rotating thing. If a request returns 
 
 ## The cache
 
-A refresh should cost one page and one short briefing, not ten pages and a whole day again. `cli/src/store.rs` keeps two files in `~/Library/Caches/xummary`:
+A refresh should cost one page of fetching, not ten, and should leave you with one thing to read. `cli/src/store.rs` keeps two files in `~/Library/Caches/xummary`:
 
-- `posts.jsonl` — every post fetched, kept for at least 72 hours whatever `--hours` asked for, so widening the window to 48h is served from disk
+- `posts.jsonl` — every post fetched, with the moment it first reached us, kept for at least 72 hours whatever `--hours` asked for
 - `briefings.jsonl` — the last 50 briefings, `{at, hours, posts, text}`
 
-Three things follow from it:
+**The fetch is incremental. The briefing is not.** Only what arrived since the last briefing needs downloading; the rest of the window is on disk. But the briefing itself always covers the whole window, so there is one document rather than a stack of slices. An earlier version summarized only the new posts and appended a block per refresh — three refreshes in half an hour sliced one evening into three partial views, which is unreadable.
 
-- **Paging stops on posts you already have.** `collect` breaks on a page with no post that is both inside the window and absent from the cache. Same heuristic as before, one cutoff later.
-- **A refresh only summarizes what arrived since the last briefing.** The cutoff is the previous briefing's `at`, so the model sees 40 new posts, not 600. Under `MIN_POSTS` new posts the run says `nothing new since HH:MM` and exits **0** without calling `claude` — that is a normal outcome, not a failure.
-- **"New" means `seen_at`, never `created_at`.** For You is ranked, so it hands you posts hours after they were written — measured on a live refresh, 31 posts first surfaced with a median lag of about four hours, one of them 35 hours old. Selecting on `created_at > last briefing` dropped **all 31**, and the next refresh skipped them again as already cached, so they were lost for good. Each cached post carries the moment it first reached us, and that is what the window compares against. A cache line with no `seen_at` predates the field and counts as seen when written.
-- **A wider window is a new question.** A briefing stored with `hours: 24` does not satisfy a `--hours 48` run, so that one goes back to a full walk. That is why `hours` is in the record.
-- **A refresh is told what it already said.** `covered_since` collects the `## ` headings of every briefing still inside the window, newest first, and `build_prompt` lists them under "I have already read a briefing today covering these stories". Without it a running story gets a fresh section every twenty minutes: two of nine sections repeated on the first real refresh — Zevent legitimately (new reactions) and Astra not at all (same story, different posts). The instruction is deliberately not "skip these": a story that actually moved should be reported, but only the part that moved.
+Four things to know:
 
-Paging therefore stops against the whole window, not against the last briefing: a post written this morning and surfaced now is still wanted. That makes For You page deeper than Following on a refresh — it is ranked, so unseen posts are scattered rather than stacked at the top. `--pages` is the ceiling that keeps it bounded.
+- **Paging stops on posts you already have.** `collect` breaks on a page with no post that is both inside the window and absent from the cache.
+- **"New" means `seen_at`, never `created_at`.** For You is ranked, so it hands you posts hours after they were written — measured on a live refresh, 31 posts first surfaced with a median lag of about four hours, one of them 35 hours old. Selecting on `created_at` dropped **all 31**, and the next refresh skipped them again as already cached, so they were lost for good. A cache line with no `seen_at` predates the field and counts as seen when written.
+- **A refresh under `MIN_NEW_POSTS` newly seen posts changes nothing.** It reports `nothing new since HH:MM · N posts` and exits **0** without calling `claude`. Rewriting the whole briefing costs a whole summary, and it would strip the marks off stories you had not read yet.
+- **The marks.** `build_prompt` lists the headings of the briefing you already have and asks for `[new]` on the end of any heading that is not among them. Both front ends strip it — `split_mark` in `ui.rs`, `Markdown.splitMark` in Swift — and draw a badge instead. The mark is English whatever the briefing's language, so a plain suffix match is enough. `store::headings` strips it too, or a story would look new forever.
 
-`--no-cache` touches neither file: a full page walk over the whole window, and the cache is left as it was found. `--log` prints the stored briefings as JSON lines, oldest first — the macOS app calls it at launch instead of knowing the path.
+Paging stops against the whole window, not against the last briefing: a post written this morning and surfaced now is still wanted. That makes For You page deeper than Following on a refresh — it is ranked, so unseen posts are scattered rather than stacked at the top. `--pages` is the ceiling that keeps it bounded.
 
-The app keeps every briefing on screen, newest at top, each under a rule with its time and post count. That is the point of the whole thing: refresh adds a block, it does not wipe what you were reading.
+`--no-cache` touches neither file: a full page walk over the whole window, and the cache is left as it was found. `--log` prints the stored briefings as JSON lines, oldest first — the macOS app calls it at launch to put the last one on screen before the refresh finishes.
 
 ## Facts that will bite you
 

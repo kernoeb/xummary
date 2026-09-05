@@ -55,5 +55,21 @@ check(
 check("a lone at-sign is plain", handles(runs("prix @ 10 euros")).isEmpty)
 check("handles cap at 15 characters", handles(runs("@abcdefghijklmnopqrstuvwxyz")).isEmpty)
 
+// The model marks a story the reader has not seen. The mark drives a badge and
+// must never survive into the heading text.
+func heading(_ line: String) -> (String, Bool)? {
+    guard case .heading(let title, let isNew)? = Markdown.blocks(line).first?.kind else {
+        return nil
+    }
+    return (title, isNew)
+}
+
+check("a marked heading loses its mark", heading("## Astra [new]").map { $0 == ("Astra", true) } == true,
+      String(describing: heading("## Astra [new]")))
+check("an unmarked heading is not new", heading("## Astra").map { $0 == ("Astra", false) } == true,
+      String(describing: heading("## Astra")))
+check("a mark inside a sentence is left alone",
+      plains(runs("le modele [new] arrive")).joined().contains("[new]"))
+
 print(failures == 0 ? "\nall passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)

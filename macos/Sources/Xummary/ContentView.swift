@@ -69,13 +69,17 @@ struct ContentView: View {
                 if let error = model.errorMessage {
                     ErrorNote(message: error, theme: theme)
                 }
-                ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
-                    EntryView(
-                        entry: entry,
-                        theme: theme,
-                        isFirst: index == 0,
-                        showCaret: entry.isLive && model.isRunning
-                    )
+                if !model.text.isEmpty {
+                    Text(stamp)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.dim)
+                        .padding(.bottom, 18)
+                }
+                ForEach(Markdown.blocks(model.text)) { block in
+                    BlockView(block: block, theme: theme, isFirst: block.id == 0)
+                }
+                if model.isRunning {
+                    Caret(theme: theme)
                 }
             }
             .frame(maxWidth: 660, alignment: .leading)
@@ -99,50 +103,25 @@ struct ContentView: View {
         .overlay(alignment: .top) { Rectangle().fill(theme.rule).frame(height: 1) }
     }
 
+    /// The line above the briefing: what it covers and when it was written.
+    private var stamp: String {
+        var parts = ["last \(model.hours)h"]
+        if let at = model.updatedAt {
+            let when = Calendar.current.isDateInToday(at)
+                ? at.formatted(date: .omitted, time: .shortened)
+                : at.formatted(date: .abbreviated, time: .shortened)
+            parts.append("updated \(when)")
+        }
+        if model.posts > 0 {
+            parts.append("\(model.posts) posts")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private var footerText: String {
         if let error = model.errorMessage { return error }
-        if model.isRunning { return model.status }
-        guard let finished = model.finishedAt else { return model.status }
-        return finished.formatted(date: .abbreviated, time: .shortened)
-    }
-}
-
-/// One run's briefing, under a rule saying when it arrived.
-private struct EntryView: View {
-    let entry: Entry
-    let theme: Theme
-    let isFirst: Bool
-    let showCaret: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !isFirst {
-                Rectangle()
-                    .fill(theme.rule)
-                    .frame(height: 1)
-                    .padding(.top, 40)
-                    .padding(.bottom, 12)
-            }
-            Text(stamp)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(theme.dim)
-                .padding(.bottom, 16)
-            ForEach(Markdown.blocks(entry.text)) { block in
-                BlockView(block: block, theme: theme, isFirst: block.id == 0)
-            }
-            if showCaret {
-                Caret(theme: theme)
-            }
-        }
-    }
-
-    private var stamp: String {
-        guard let at = entry.at else { return "now" }
-        let time = at.formatted(date: .omitted, time: .shortened)
-        let day = Calendar.current.isDateInToday(at)
-            ? time
-            : at.formatted(date: .abbreviated, time: .shortened)
-        return entry.posts > 0 ? "\(day) · \(entry.posts) posts" : day
+        if model.isRunning || model.updatedAt == nil { return model.status }
+        return model.status
     }
 }
 
@@ -153,12 +132,17 @@ private struct BlockView: View {
 
     var body: some View {
         switch block.kind {
-        case .heading(let title):
-            Text(title)
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(theme.text)
-                .padding(.top, isFirst ? 0 : 34)
-                .padding(.bottom, 12)
+        case .heading(let title, let isNew):
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text(title)
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                if isNew {
+                    NewBadge(theme: theme)
+                }
+            }
+            .padding(.top, isFirst ? 0 : 34)
+            .padding(.bottom, 12)
 
         case .paragraph(let runs):
             styled(runs)
@@ -184,6 +168,21 @@ private struct BlockView: View {
 
     private func styled(_ runs: [Inline]) -> Text {
         runs.reduce(Text(verbatim: "")) { $0 + $1.text(theme) }
+    }
+}
+
+/// Marks a story that was not in the briefing you last read.
+private struct NewBadge: View {
+    let theme: Theme
+
+    var body: some View {
+        Text("NEW")
+            .font(.system(size: 9, weight: .bold))
+            .tracking(0.6)
+            .foregroundStyle(theme.background)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(theme.accent, in: RoundedRectangle(cornerRadius: 3))
     }
 }
 

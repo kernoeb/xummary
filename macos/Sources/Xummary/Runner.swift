@@ -1,33 +1,35 @@
 import Foundation
 
-/// One briefing on screen: everything a single run produced.
-struct Entry: Identifiable {
-    let id = UUID()
-    /// When the run finished. Nil while its text is still arriving.
-    var at: Date?
+/// A briefing the CLI has stored.
+struct Entry {
+    var at: Date
     var posts = 0
     var text = ""
-    var isLive = false
 }
 
 /// Runs the `xummary` CLI and collects its output: the briefing on stdout,
 /// progress on stderr.
 ///
-/// Past briefings come from the CLI's own cache, so a refresh adds a block at
-/// the top instead of wiping what you were reading.
+/// There is one briefing, never a stack. It comes back from the CLI's cache at
+/// launch, and a refresh rewrites it in place — so nothing is lost, and there
+/// is only ever one thing to read.
 @MainActor
 final class BriefingModel: ObservableObject {
-    @Published private(set) var entries: [Entry] = []
+    @Published private(set) var text = ""
+    @Published private(set) var updatedAt: Date?
+    @Published private(set) var posts = 0
     @Published private(set) var status = "ready"
     @Published private(set) var isRunning = false
     @Published private(set) var errorMessage: String?
-    @Published private(set) var finishedAt: Date?
     @Published var hours = 24
 
     private var process: Process?
     private var lastError = ""
-    /// Post count read off the progress line, for the finished block's header.
+    /// Post count read off the progress line, for the footer.
     private var livePosts = 0
+    /// Whether this run has put anything on screen. Until it has, the briefing
+    /// you were reading stays up — a run with nothing new must not blank it.
+    private var replaced = false
     private var historyLoaded = false
     /// Tells a finished run apart from the one now on screen.
     private var generation = 0
@@ -44,11 +46,10 @@ final class BriefingModel: ObservableObject {
 
         generation += 1
         let token = generation
-        entries.insert(Entry(isLive: true), at: 0)
         livePosts = 0
+        replaced = false
         lastError = ""
         errorMessage = nil
-        finishedAt = nil
         outBuffer = Data()
         errBuffer = Data()
         status = "starting"
@@ -97,30 +98,31 @@ final class BriefingModel: ObservableObject {
         // Bumping the generation makes anything still in flight from the old run
         // arrive stale, so it cannot clobber the run that replaces it.
         generation += 1
-        entries.removeAll { $0.isLive }
         process?.terminate()
         process = nil
         isRunning = false
     }
 
-    /// Loads what past runs wrote. Called once at launch; the block a run adds
-    /// stays in memory afterwards, so nothing is ever listed twice.
+    /// Puts the last stored briefing on screen at launch, so the window has
+    /// something to read while the refresh runs.
     func loadHistory() {
         guard let binary = Self.locateBinary() else { return }
         let environment = Self.childEnvironment()
         Task.detached(priority: .userInitiated) {
             let stored = Self.readLog(binary, environment)
-            await MainActor.run { self.appendHistory(stored) }
+            await MainActor.run { self.show(stored.first) }
         }
     }
 
-    /// History goes under whatever is already on screen, so it and the first
-    /// run can land in either order. Once only, so a run's own block is never
-    /// listed twice.
-    private func appendHistory(_ stored: [Entry]) {
+    /// Never over the run that launched alongside it: the two land in either
+    /// order, and the fresher one wins.
+    private func show(_ stored: Entry?) {
         guard !historyLoaded else { return }
         historyLoaded = true
-        entries += stored
+        guard let stored, !replaced else { return }
+        text = stored.text
+        updatedAt = stored.at
+        posts = stored.posts
     }
 
     /// `xummary --log` prints the stored briefings as JSON lines, oldest first.
@@ -189,11 +191,16 @@ final class BriefingModel: ObservableObject {
     }
 
     private func absorbOutput(_ chunk: Data, token: Int) {
-        guard token == generation, let live = entries.firstIndex(where: { $0.isLive }) else {
-            return
-        }
+        guard token == generation else { return }
         outBuffer.append(chunk)
-        entries[live].text += Self.takeText(&outBuffer)
+        let text = Self.takeText(&outBuffer)
+        guard !text.isEmpty else { return }
+        // The old briefing is only cleared once the new one starts arriving.
+        if !replaced {
+            replaced = true
+            self.text = ""
+        }
+        self.text += text
     }
 
     private func absorbProgress(_ chunk: Data, token: Int) {
@@ -259,29 +266,18 @@ final class BriefingModel: ObservableObject {
         guard token == generation else { return }
         isRunning = false
         process = nil
-        let live = entries.firstIndex { $0.isLive }
 
         if code != 0 {
             errorMessage = lastError.isEmpty ? "xummary exited with code \(code)" : lastError
             status = "failed"
-            if let live { entries.remove(at: live) }
             return
         }
-
-        // A run with nothing new to say writes no text and says so in its
-        // status. Drop the empty block and leave that status in the footer,
-        // which a finish time would replace.
-        guard let live,
-              !entries[live].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            if let live { entries.remove(at: live) }
-            return
-        }
-
-        finishedAt = Date()
-        entries[live].at = Date()
-        entries[live].posts = livePosts
-        entries[live].isLive = false
+        // A run with nothing new writes nothing and says so in its status. The
+        // briefing on screen is still the current one, so leave it and its time
+        // alone — the status stays in the footer.
+        guard replaced else { return }
+        updatedAt = Date()
+        posts = livePosts
     }
 
     /// Prefers the copy bundled inside the .app, then the usual install spots.

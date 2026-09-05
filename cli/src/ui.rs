@@ -189,9 +189,12 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
 /// height.
 fn layout_text(text: &str, width: usize) -> Vec<Line<'static>> {
     let width = width.max(10);
-    let heading = Style::default()
+    // A story you have not seen is bold; one carried over from the briefing you
+    // already read is the same colour, unemphasised. No badge glyph needed.
+    let fresh = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
+    let carried = Style::default().fg(Color::Cyan);
     let mut out: Vec<Line<'static>> = Vec::new();
 
     for raw in text.split('\n') {
@@ -206,9 +209,11 @@ fn layout_text(text: &str, width: usize) -> Vec<Line<'static>> {
             if !out.is_empty() {
                 out.push(Line::raw(""));
             }
-            (h.to_string(), heading, 0)
+            let (title, is_new) = split_mark(h);
+            (title, if is_new { fresh } else { carried }, 0)
         } else if let Some(h) = line.strip_prefix("# ") {
-            (h.to_string(), heading, 0)
+            let (title, is_new) = split_mark(h);
+            (title, if is_new { fresh } else { carried }, 0)
         } else if let Some(b) = line.strip_prefix("- ") {
             (format!("• {b}"), Style::default(), 2)
         } else {
@@ -225,6 +230,15 @@ fn layout_text(text: &str, width: usize) -> Vec<Line<'static>> {
         }
     }
     out
+}
+
+/// Splits the new-story mark off a heading. The model writes it in English
+/// whatever the briefing's language, so this is a plain suffix match.
+fn split_mark(heading: &str) -> (String, bool) {
+    match heading.trim_end().strip_suffix(crate::llm::NEW_MARK.trim()) {
+        Some(title) => (title.trim_end().to_string(), true),
+        None => (heading.to_string(), false),
+    }
 }
 
 /// Greedy word wrap on display width. A word wider than the pane is cut.
@@ -281,6 +295,12 @@ mod tests {
     #[test]
     fn wrap_counts_display_width_not_bytes() {
         assert_eq!(wrap("日本語 ok", 6), vec!["日本語", "ok"]);
+    }
+
+    #[test]
+    fn a_marked_heading_loses_its_mark() {
+        assert_eq!(split_mark("Astra [new]"), ("Astra".to_string(), true));
+        assert_eq!(split_mark("Astra"), ("Astra".to_string(), false));
     }
 
     #[test]

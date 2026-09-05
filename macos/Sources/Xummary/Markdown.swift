@@ -3,7 +3,9 @@ import SwiftUI
 /// A line of the briefing, once its shape is known.
 struct Block: Identifiable {
     enum Kind {
-        case heading(String)
+        /// `isNew` is set for a story the reader has not seen yet. The model
+        /// marks it in the text; the mark never reaches the screen.
+        case heading(String, isNew: Bool)
         case paragraph([Inline])
         case bullet([Inline])
     }
@@ -32,13 +34,26 @@ enum Markdown {
             if line.isEmpty { return nil }
             defer { id += 1 }
             if let heading = line.dropPrefix("## ") ?? line.dropPrefix("# ") {
-                return Block(id: id, kind: .heading(heading))
+                let (title, isNew) = splitMark(heading)
+                return Block(id: id, kind: .heading(title, isNew: isNew))
             }
             if let bullet = line.dropPrefix("- ") ?? line.dropPrefix("• ") {
                 return Block(id: id, kind: .bullet(inlines(bullet)))
             }
             return Block(id: id, kind: .paragraph(inlines(line)))
         }
+    }
+
+    /// The mark the model puts on a story the reader has not seen. It is written
+    /// in English whatever the language of the briefing, so a suffix match is
+    /// enough.
+    static let newMark = "[new]"
+
+    static func splitMark(_ heading: String) -> (String, Bool) {
+        let trimmed = heading.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasSuffix(newMark) else { return (heading, false) }
+        let title = String(trimmed.dropLast(newMark.count))
+        return (title.trimmingCharacters(in: .whitespaces), true)
     }
 
     /// Splits one line into styled runs: `**bold**`, `*italic*`, quoted phrases,
