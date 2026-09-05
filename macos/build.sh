@@ -12,6 +12,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Xummary "$APP/Contents/MacOS/Xummary"
 
+# The icon is drawn from source; ICON_VARIANT picks the mark (distil, stack, bold).
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+swift tools/make-icon.swift "$ICONSET" "${ICON_VARIANT:-distil}" >/dev/null
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+
 if [ -x "$CLI" ]; then
     cp "$CLI" "$APP/Contents/Resources/xummary"
     echo "embedded CLI from $CLI"
@@ -28,6 +33,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key><string>Xummary</string>
     <key>CFBundleIdentifier</key><string>com.kernoeb.xummary</string>
     <key>CFBundleExecutable</key><string>Xummary</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>

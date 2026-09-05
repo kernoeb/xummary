@@ -8,3 +8,7 @@
 
 # macOS
 .DS_Store
+
+# Generated icon artifacts
+/macos/AppIcon.iconset/
+/macos/AppIcon.icns
