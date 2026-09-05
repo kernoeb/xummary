@@ -321,15 +321,19 @@ async fn produce(
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
     let mut text = String::new();
-    // The briefing the reader has already seen. Its stories keep their plain
-    // heading; everything else is marked, so a refresh is scannable.
-    let covered = baseline
-        .as_ref()
-        .map_or(Vec::new(), |b| store::headings(&b.text));
+    // The briefing the reader has already seen: each story and where it stood.
+    // The first sentence is enough to tell a story that moved from one that
+    // did not, and short enough that there is no prose to copy.
+    let covered: Vec<String> = baseline.as_ref().map_or_else(Vec::new, |b| {
+        store::sections(&b.text)
+            .iter()
+            .map(|s| format!("{} — {}", s.heading, s.gist()))
+            .collect()
+    });
     let read_at = baseline.as_ref().map(|b| clock(b.at));
     let seen = read_at.as_ref().map(|at| llm::Previous {
         at,
-        headings: &covered,
+        stories: &covered,
     });
     let prompt = llm::build_prompt(&all, hours, seen, lang);
     let outcome = llm::stream(&prompt, model, effort, |token| {

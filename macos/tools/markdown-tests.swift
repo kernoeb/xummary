@@ -57,16 +57,23 @@ check("handles cap at 15 characters", handles(runs("@abcdefghijklmnopqrstuvwxyz"
 
 // The model marks a story the reader has not seen. The mark drives a badge and
 // must never survive into the heading text.
-func heading(_ line: String) -> (String, Bool)? {
-    guard case .heading(let title, let isNew)? = Markdown.blocks(line).first?.kind else {
+func heading(_ line: String) -> (String, Block.Mark)? {
+    guard case .heading(let title, let mark)? = Markdown.blocks(line).first?.kind else {
         return nil
     }
-    return (title, isNew)
+    return (title, mark)
 }
 
-check("a marked heading loses its mark", heading("## Astra [new]").map { $0 == ("Astra", true) } == true,
+func headingIs(_ line: String, _ title: String, _ mark: Block.Mark) -> Bool {
+    guard let (got, gotMark) = heading(line) else { return false }
+    return got == title && gotMark == mark
+}
+
+check("a new heading loses its mark", headingIs("## Astra [new]", "Astra", .new),
       String(describing: heading("## Astra [new]")))
-check("an unmarked heading is not new", heading("## Astra").map { $0 == ("Astra", false) } == true,
+check("an updated heading loses its mark", headingIs("## Astra [updated]", "Astra", .updated),
+      String(describing: heading("## Astra [updated]")))
+check("an unmarked heading is carried", headingIs("## Astra", "Astra", .carried),
       String(describing: heading("## Astra")))
 check("a mark inside a sentence is left alone",
       plains(runs("le modele [new] arrive")).joined().contains("[new]"))

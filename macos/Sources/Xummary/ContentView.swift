@@ -142,14 +142,12 @@ private struct BlockView: View {
 
     var body: some View {
         switch block.kind {
-        case .heading(let title, let isNew):
+        case .heading(let title, let mark):
             HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Text(title)
                     .font(.system(size: 21, weight: .semibold))
                     .foregroundStyle(theme.text)
-                if isNew {
-                    NewBadge(theme: theme)
-                }
+                MarkBadge(mark: mark, theme: theme)
             }
             .padding(.top, isFirst ? 0 : 34)
             .padding(.bottom, 12)
@@ -181,18 +179,35 @@ private struct BlockView: View {
     }
 }
 
-/// Marks a story that was not in the briefing you last read.
-private struct NewBadge: View {
+/// How much of this story is new to you. A story you have never seen shouts;
+/// one that only moved since you read it does not.
+private struct MarkBadge: View {
+    let mark: Block.Mark
     let theme: Theme
 
     var body: some View {
-        Text("NEW")
+        switch mark {
+        case .carried:
+            EmptyView()
+        case .new:
+            label("NEW")
+                .foregroundStyle(theme.background)
+                .background(theme.accent, in: shape)
+        case .updated:
+            label("UPDATED")
+                .foregroundStyle(theme.accent)
+                .overlay(shape.strokeBorder(theme.accent.opacity(0.55), lineWidth: 1))
+        }
+    }
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 3) }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
             .font(.system(size: 9, weight: .bold))
             .tracking(0.6)
-            .foregroundStyle(theme.background)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(theme.accent, in: RoundedRectangle(cornerRadius: 3))
     }
 }
 

@@ -76,7 +76,16 @@ Four things to know:
 - **Paging stops on posts you already have.** `collect` breaks on a page with no post that is both inside the window and absent from the cache.
 - **"New" means `seen_at`, never `created_at`.** For You is ranked, so it hands you posts hours after they were written — measured on a live refresh, 31 posts first surfaced with a median lag of about four hours, one of them 35 hours old. Selecting on `created_at` dropped **all 31**, and the next refresh skipped them again as already cached, so they were lost for good. A cache line with no `seen_at` predates the field and counts as seen when written.
 - **A refresh under `MIN_NEW_POSTS` newly seen posts changes nothing.** It reports `nothing new since HH:MM`, or `only N new posts since HH:MM`, and exits **0** without calling `claude`. Rewriting the whole briefing costs a whole summary.
-- **The marks.** `build_prompt` lists the headings of the briefing you already saw and asks for `[new]` on the end of any heading that is not among them. Both front ends strip it — `split_mark` in `ui.rs`, `Markdown.splitMark` in Swift — and draw a badge instead. The mark is English whatever the briefing's language, so a plain suffix match is enough. `store::headings` strips it too, or a story would look new forever.
+- **The marks.** `build_prompt` lists each story the reader already saw as `heading — first sentence`, and asks for `[new]` on a heading the list does not have and `[updated]` on one it has that moved. Both front ends strip the marks — `split_mark` in `ui.rs`, `Markdown.splitMark` in Swift — and draw a badge instead. They are English whatever the briefing's language, so a suffix match is enough. `store::sections` strips them too, or a story would look new forever.
+- **Never hand the model its own prose.** The first sentence, not the section. Measured on one frozen sample of 600 posts and one prior briefing, three ways:
+
+  | recall | copied 4-grams | headings reused | new | updated |
+  |---|---|---|---|---|
+  | headings only | 16.0% | 67% | 4 | n/a |
+  | heading + first sentence | 16.8% | 0% | 1 | 2 |
+  | full section text | **49.9%** | 80% | 2 | **0** |
+
+  Full text reproduced the prior briefing's eight headings verbatim and in order, then appended two, and found no updates at all — it edited the old briefing instead of reading the posts. The first sentence costs 0.8 points of overlap and buys the `[updated]` mark. No variant invented a handle. Rerun it with `XUMMARY_CACHE_DIR` pointed at a frozen copy and `--pages 0`, which skips the network so every variant sees the same posts.
 - **A mark lives until you look at it, not until the text is replaced.** The baseline is `last_read()`, the newest briefing with a `read_at` — not `last_briefing()`. Otherwise a refresh you never opened clears the marks and the stories go by unseen. The app calls `xummary --mark-read` after the window has been active for four seconds with a finished briefing on screen; the CLI owns the write, so the file format stays in one place. Until anything has been read the baseline falls back to the last briefing written.
 
 The two baselines are different questions and must not be merged. `previous` — the last briefing **written** — decides how much has arrived and whether regenerating is worth it. `baseline` — the last briefing **read** — decides what gets marked.

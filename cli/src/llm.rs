@@ -51,11 +51,20 @@ const MAX_COVERED: usize = 40;
 /// ends strip it and draw a badge instead.
 pub const NEW_MARK: &str = " [new]";
 
+/// The heading suffix for a story the reader has seen that has since moved.
+pub const UPDATED_MARK: &str = " [updated]";
+
 /// The briefing the reader already has, so the next one can mark what changed.
+///
+/// `stories` is one line per story: its heading and where it stood, which is
+/// enough to tell a story that has moved from one that has not. Deliberately
+/// not the full text — measured on the same 600 posts, handing the model its
+/// own prose tripled verbatim copying (50% of four-word runs against 16%) and
+/// froze the section list, while heading plus first sentence cost 0.8 points.
 pub struct Previous<'a> {
     /// Local clock time, for the prompt to name.
     pub at: &'a str,
-    pub headings: &'a [String],
+    pub stories: &'a [String],
 }
 
 /// One briefing of the whole window. Every refresh rewrites it, so there is
@@ -105,28 +114,35 @@ Now write the briefing. Start with the first `## ` heading.",
 
 /// The "mark what I have not seen" block, empty on a first briefing.
 fn marking_section(previous: Previous) -> String {
-    if previous.headings.is_empty() {
+    if previous.stories.is_empty() {
         return String::new();
     }
     let list: String = previous
-        .headings
+        .stories
         .iter()
         .take(MAX_COVERED)
         .map(|h| format!("- {h}\n"))
         .collect();
     let at = previous.at;
+    let new = NEW_MARK.trim();
+
+    let updated = UPDATED_MARK.trim();
 
     format!(
-        "At {at} I read a briefing of this same timeline. It covered these stories:\n\
-{list}\n\
-Check every heading you write against that list. A story on the list gets \
-nothing, ever: not when you word its heading differently, not when you copy \
-its heading exactly, not when fresh posts have piled onto it. Only a story \
-absent from the list is new, and its heading ends with \"{NEW_MARK}\" — exactly \
-those characters, in English, whatever the language of the briefing. Write \
-\"{NEW_MARK}\" nowhere else: never in Also, never inside a sentence. Most \
-sections will carry no mark, and that is the expected shape.\n\n",
-        NEW_MARK = NEW_MARK.trim()
+        "At {at} I read a briefing of this same timeline. This is where each story \
+stood then:\n{list}\n\
+That list is for comparison only. Write the briefing from the posts, never from \
+the list: not its sentences, not its order, not its choice of what to leave out. \
+Then mark two things.\n\
+- A story the list does not have is new. Its heading ends with \"{new}\".\n\
+- A story the list has that has since moved — a new figure, a new development, a \
+turn the list does not carry — ends with \"{updated}\".\n\
+Wording it differently is not moving. More posts saying the same thing is not \
+moving. If the list already has the substance, the heading gets nothing. Use \
+both marks in English whatever the language of the briefing, exactly those \
+characters, and nowhere but at the end of a heading — never in Also, never \
+inside a sentence. Most sections will carry no mark, and that is the expected \
+shape.\n\n"
     )
 }
 
@@ -324,18 +340,20 @@ mod tests {
 
     #[test]
     fn a_refresh_is_told_what_the_reader_has_already_seen() {
-        let headings = vec!["ZEVENT franchit douze millions".to_string(), "Astra".to_string()];
+        let stories = vec!["Zevent — La cagnotte passe 12 millions.".to_string()];
         let prompt = build_prompt(
             &[tweet("alice", "hi")],
             24,
             Some(Previous {
                 at: "00:57",
-                headings: &headings,
+                stories: &stories,
             }),
             "French",
         );
         assert!(prompt.contains("At 00:57 I read a briefing"));
-        assert!(prompt.contains("- ZEVENT franchit douze millions\n- Astra\n"));
+        assert!(prompt.contains("- Zevent — La cagnotte passe 12 millions.\n"));
         assert!(prompt.contains("[new]"));
+        assert!(prompt.contains("[updated]"));
+        assert!(prompt.contains("comparison only"));
     }
 }

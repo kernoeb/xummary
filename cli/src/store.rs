@@ -60,10 +60,15 @@ pub struct Store {
 
 impl Store {
     pub fn open() -> Result<Self> {
-        let dir = directories::BaseDirs::new()
-            .context("no home directory")?
-            .cache_dir()
-            .join("xummary");
+        // `XUMMARY_CACHE_DIR` points the store somewhere else, so a run can be
+        // replayed against a frozen cache without touching the real one.
+        let dir = match std::env::var_os("XUMMARY_CACHE_DIR") {
+            Some(path) => PathBuf::from(path),
+            None => directories::BaseDirs::new()
+                .context("no home directory")?
+                .cache_dir()
+                .join("xummary"),
+        };
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         Ok(Self { dir })
     }
@@ -155,15 +160,60 @@ impl Store {
     }
 }
 
-/// The `## ` lines of a briefing, with any new-story mark taken off. `Also` is
-/// the leftovers bin, not a story.
-pub fn headings(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| line.trim().strip_prefix("## "))
-        .map(|heading| heading.trim_end_matches(crate::llm::NEW_MARK).trim_end())
-        .filter(|heading| !heading.eq_ignore_ascii_case("also"))
-        .map(str::to_string)
-        .collect()
+/// One story out of a briefing.
+pub struct Section {
+    pub heading: String,
+    pub body: String,
+}
+
+impl Section {
+    /// The first sentence of the section — enough to say where the story stood,
+    /// without handing over a paragraph to copy.
+    pub fn gist(&self) -> String {
+        let end = self
+            .body
+            .match_indices(". ")
+            .map(|(i, _)| i + 1)
+            .next()
+            .unwrap_or(self.body.len());
+        self.body[..end].trim().to_string()
+    }
+}
+
+/// Splits a briefing into its stories. `Also` is the leftovers bin, not a
+/// story, and any new-story mark is taken off the heading.
+pub fn sections(text: &str) -> Vec<Section> {
+    let mut out: Vec<Section> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(heading) = line.strip_prefix("## ") {
+            let heading = heading
+                .trim_end_matches(crate::llm::NEW_MARK)
+                .trim_end_matches(crate::llm::UPDATED_MARK)
+                .trim_end()
+                .to_string();
+            if heading.eq_ignore_ascii_case("also") {
+                break;
+            }
+            out.push(Section {
+                heading,
+                body: String::new(),
+            });
+        } else if let Some(current) = out.last_mut() {
+            if !line.is_empty() {
+                if !current.body.is_empty() {
+                    current.body.push(' ');
+                }
+                current.body.push_str(line);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+fn headings(text: &str) -> Vec<String> {
+    sections(text).into_iter().map(|s| s.heading).collect()
 }
 
 fn read(path: &Path) -> String {
@@ -306,8 +356,22 @@ mod tests {
 
     #[test]
     fn headings_skip_also_and_drop_the_new_mark() {
-        let text = "## Morning story\n\nText.\n\n## Fresh one [new]\n\nText.\n\n## Also\n- a leftover";
-        assert_eq!(headings(text), vec!["Morning story", "Fresh one"]);
+        let text = "## Morning story\n\nText.\n\n## Fresh one [new]\n\nText.\n\n## Moved on [updated]\n\nText.\n\n## Also\n- a leftover";
+        assert_eq!(headings(text), vec!["Morning story", "Fresh one", "Moved on"]);
+    }
+
+    #[test]
+    fn a_gist_is_the_first_sentence_only() {
+        let text = "## Zevent\n\nLa cagnotte passe 12 millions. Puis @a critique. Et @b repond.";
+        let sections = sections(text);
+        assert_eq!(sections[0].gist(), "La cagnotte passe 12 millions.");
+        assert!(sections[0].body.contains("@b repond"));
+    }
+
+    #[test]
+    fn a_section_with_one_sentence_gists_to_all_of_it() {
+        let sections = sections("## Solo\n\nRien qu une phrase");
+        assert_eq!(sections[0].gist(), "Rien qu une phrase");
     }
 
     #[test]

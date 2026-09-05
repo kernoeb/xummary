@@ -2,10 +2,19 @@ import SwiftUI
 
 /// A line of the briefing, once its shape is known.
 struct Block: Identifiable {
+    /// How much of a story the reader has already read. The model marks it in
+    /// the text; the mark itself never reaches the screen.
+    enum Mark {
+        /// Already in the briefing they read, unchanged since.
+        case carried
+        /// Not in the briefing they read.
+        case new
+        /// In the briefing they read, but the story has moved.
+        case updated
+    }
+
     enum Kind {
-        /// `isNew` is set for a story the reader has not seen yet. The model
-        /// marks it in the text; the mark never reaches the screen.
-        case heading(String, isNew: Bool)
+        case heading(String, mark: Mark)
         case paragraph([Inline])
         case bullet([Inline])
     }
@@ -34,8 +43,8 @@ enum Markdown {
             if line.isEmpty { return nil }
             defer { id += 1 }
             if let heading = line.dropPrefix("## ") ?? line.dropPrefix("# ") {
-                let (title, isNew) = splitMark(heading)
-                return Block(id: id, kind: .heading(title, isNew: isNew))
+                let (title, mark) = splitMark(heading)
+                return Block(id: id, kind: .heading(title, mark: mark))
             }
             if let bullet = line.dropPrefix("- ") ?? line.dropPrefix("• ") {
                 return Block(id: id, kind: .bullet(inlines(bullet)))
@@ -44,16 +53,17 @@ enum Markdown {
         }
     }
 
-    /// The mark the model puts on a story the reader has not seen. It is written
-    /// in English whatever the language of the briefing, so a suffix match is
-    /// enough.
-    static let newMark = "[new]"
+    /// The marks the model puts on a heading. They are written in English
+    /// whatever the language of the briefing, so a suffix match is enough.
+    static let marks: [(String, Block.Mark)] = [("[new]", .new), ("[updated]", .updated)]
 
-    static func splitMark(_ heading: String) -> (String, Bool) {
+    static func splitMark(_ heading: String) -> (String, Block.Mark) {
         let trimmed = heading.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasSuffix(newMark) else { return (heading, false) }
-        let title = String(trimmed.dropLast(newMark.count))
-        return (title.trimmingCharacters(in: .whitespaces), true)
+        for (suffix, mark) in marks where trimmed.hasSuffix(suffix) {
+            let title = String(trimmed.dropLast(suffix.count))
+            return (title.trimmingCharacters(in: .whitespaces), mark)
+        }
+        return (heading, .carried)
     }
 
     /// Splits one line into styled runs: `**bold**`, `*italic*`, quoted phrases,

@@ -189,10 +189,14 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
 /// height.
 fn layout_text(text: &str, width: usize) -> Vec<Line<'static>> {
     let width = width.max(10);
-    // A story you have not seen is bold; one carried over from the briefing you
-    // already read is the same colour, unemphasised. No badge glyph needed.
+    // Three states, told apart by weight and colour rather than a badge glyph:
+    // a story you have never seen, one that moved since you read it, and one
+    // carried over unchanged.
     let fresh = Style::default()
         .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let moved = Style::default()
+        .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
     let carried = Style::default().fg(Color::Cyan);
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -209,11 +213,11 @@ fn layout_text(text: &str, width: usize) -> Vec<Line<'static>> {
             if !out.is_empty() {
                 out.push(Line::raw(""));
             }
-            let (title, is_new) = split_mark(h);
-            (title, if is_new { fresh } else { carried }, 0)
+            let (title, mark) = split_mark(h);
+            (title, style_for(mark, fresh, moved, carried), 0)
         } else if let Some(h) = line.strip_prefix("# ") {
-            let (title, is_new) = split_mark(h);
-            (title, if is_new { fresh } else { carried }, 0)
+            let (title, mark) = split_mark(h);
+            (title, style_for(mark, fresh, moved, carried), 0)
         } else if let Some(b) = line.strip_prefix("- ") {
             (format!("• {b}"), Style::default(), 2)
         } else {
@@ -232,12 +236,37 @@ fn layout_text(text: &str, width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Splits the new-story mark off a heading. The model writes it in English
-/// whatever the briefing's language, so this is a plain suffix match.
-fn split_mark(heading: &str) -> (String, bool) {
-    match heading.trim_end().strip_suffix(crate::llm::NEW_MARK.trim()) {
-        Some(title) => (title.trim_end().to_string(), true),
-        None => (heading.to_string(), false),
+/// What a heading says about how much of its story you have already read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mark {
+    /// Already in the briefing you read, unchanged since.
+    Carried,
+    /// Not in the briefing you read.
+    New,
+    /// In the briefing you read, but the story has moved.
+    Updated,
+}
+
+/// Splits the mark off a heading. The model writes it in English whatever the
+/// briefing's language, so this is a plain suffix match.
+fn split_mark(heading: &str) -> (String, Mark) {
+    let heading = heading.trim_end();
+    for (suffix, mark) in [
+        (crate::llm::NEW_MARK.trim(), Mark::New),
+        (crate::llm::UPDATED_MARK.trim(), Mark::Updated),
+    ] {
+        if let Some(title) = heading.strip_suffix(suffix) {
+            return (title.trim_end().to_string(), mark);
+        }
+    }
+    (heading.to_string(), Mark::Carried)
+}
+
+fn style_for(mark: Mark, fresh: Style, moved: Style, carried: Style) -> Style {
+    match mark {
+        Mark::New => fresh,
+        Mark::Updated => moved,
+        Mark::Carried => carried,
     }
 }
 
@@ -299,8 +328,12 @@ mod tests {
 
     #[test]
     fn a_marked_heading_loses_its_mark() {
-        assert_eq!(split_mark("Astra [new]"), ("Astra".to_string(), true));
-        assert_eq!(split_mark("Astra"), ("Astra".to_string(), false));
+        assert_eq!(split_mark("Astra [new]"), ("Astra".to_string(), Mark::New));
+        assert_eq!(
+            split_mark("Astra [updated]"),
+            ("Astra".to_string(), Mark::Updated)
+        );
+        assert_eq!(split_mark("Astra"), ("Astra".to_string(), Mark::Carried));
     }
 
     #[test]
