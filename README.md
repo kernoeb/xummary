@@ -6,6 +6,10 @@
 them to Claude, and gives you one grouped briefing of what actually happened.
 No feed, no infinite scroll, no rage bait — a page you read and close.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="The Xummary window showing a briefing: three sections, each one story, with @handles picked out in the accent colour" width="700">
+</p>
+
 Two front ends, one engine:
 
 | | |
@@ -13,7 +17,7 @@ Two front ends, one engine:
 | [`cli/`](cli) | a Rust terminal app |
 | [`macos/`](macos) | a SwiftUI window that runs the CLI and renders it |
 
-## What it looks like
+## In the terminal
 
 ```
 ## ZEVENT 2026 occupe la timeline
