@@ -27,9 +27,9 @@ swift build -c release
 ICON_PALETTE=paper ./build.sh       # night (default) | paper | dark
 XUMMARY_BIN=/path/to/xummary ./build.sh
 
-# install
-cp cli/target/release/xummary ~/.local/bin/
-cp -R macos/Xummary.app /Applications/
+# install — always remove first, see below
+rm -f ~/.local/bin/xummary && cp cli/target/release/xummary ~/.local/bin/
+rm -rf /Applications/Xummary.app && cp -R macos/Xummary.app /Applications/
 ```
 
 **Fast check that fetching still works, without spending tokens on a summary:**
@@ -93,6 +93,10 @@ The `features` map in `x.rs` is a separate rotating thing. If a request returns 
 - Other `claude` sessions on the same account contend. Check `ps -eo etime,command | grep claude` before trusting a number, and never benchmark while the app is running.
 
 Each run reports its own breakdown (`600 posts · fetch 9s · wait 4s · total 41s`), where `wait` is time-to-first-token. Use it instead of guessing: a slow start and slow generation have different causes.
+
+**Thinking is not streamed.** A run bills ~66% of its output tokens as thinking (`usage.output_tokens_details.thinking_tokens`), and none of it arrives as a delta — measured 556 thinking tokens against 0 streamed thinking characters. So the whole thinking phase is dead air on stdout and looks like a hang. That is what the elapsed ticker in `produce` exists for; do not remove it.
+
+**Overwriting a binary in place kills it.** On arm64 macOS, `cp` onto an existing signed binary invalidates its signature and the kernel SIGKILLs it at launch — exit `137`, no output, no error message, which reads exactly like a crash on startup. Always `rm -f` the destination first. This applies to `~/.local/bin/xummary` and to `/Applications/Xummary.app`.
 
 **Signing** — `build.sh` signs ad-hoc, so every rebuild is a new identity to TCC and macOS re-asks for permissions. Not a bug; a Developer ID would be needed to stop it.
 

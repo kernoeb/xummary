@@ -168,18 +168,43 @@ async fn produce(
         "{posts} posts · last {hours}h · summarizing"
     )));
 
+    // Most of the generation is thinking, and thinking is not streamed, so
+    // nothing arrives for a long stretch. Tick the elapsed seconds meanwhile,
+    // otherwise a working run is indistinguishable from a hung one.
+    let ticker = {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let mut seconds = 0u64;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                seconds += 1;
+                let _ = tx.send(Update::Status(format!(
+                    "{posts} posts · thinking · {seconds}s"
+                )));
+            }
+        })
+    };
+
     // Where a run actually spends its time, reported every run rather than
     // guessed at. A slow start and a slow finish have different causes.
     let mut first_token: Option<std::time::Duration> = None;
+    let mut ticker = Some(ticker);
     let prompt = llm::build_prompt(&all, hours, lang);
-    llm::stream(&prompt, model, |token| {
+    let outcome = llm::stream(&prompt, model, |token| {
+        if let Some(handle) = ticker.take() {
+            handle.abort();
+        }
         if first_token.is_none() {
             first_token = Some(started.elapsed());
         }
         let _ = tx.send(Update::Token(token.to_string()));
     })
-    .await
-    .context("summary failed")?;
+    .await;
+    // A run that fails before its first token leaves the ticker running.
+    if let Some(handle) = ticker.take() {
+        handle.abort();
+    }
+    outcome.context("summary failed")?;
 
     let wait = first_token.map_or(0.0, |t| (t - fetched).as_secs_f64());
     let _ = tx.send(Update::Status(format!(

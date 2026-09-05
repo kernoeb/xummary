@@ -47,6 +47,7 @@ browser logged into x.com.
 git clone https://github.com/kernoeb/xummary
 cd xummary/cli
 cargo build --release
+rm -f ~/.local/bin/xummary          # replacing in place breaks the signature
 cp target/release/xummary ~/.local/bin/
 ```
 
