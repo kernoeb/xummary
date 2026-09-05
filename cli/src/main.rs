@@ -268,9 +268,10 @@ async fn produce(
         .map(|b| b.at.with_timezone(&chrono::Local).format("%H:%M").to_string());
     if let Some(at) = &last_read {
         if fresh < MIN_NEW_POSTS {
-            let _ = tx.send(Update::Status(format!(
-                "nothing new since {at} · {fresh} posts"
-            )));
+            let _ = tx.send(Update::Status(match fresh {
+                0 => format!("nothing new since {at}"),
+                n => format!("only {n} new posts since {at}"),
+            }));
             return Ok(());
         }
     }
@@ -411,20 +412,29 @@ async fn collect(
 }
 
 /// `--print`: no terminal takeover, just the briefing on stdout.
+///
+/// A run with nothing new writes nothing at all, not even the closing newline.
+/// The app treats any output as the new briefing arriving, so a stray newline
+/// makes it throw away the briefing you were reading.
 async fn print_plain(mut rx: mpsc::UnboundedReceiver<Update>) -> Result<()> {
     use std::io::Write;
+    let mut wrote = false;
     while let Some(update) = rx.recv().await {
         match update {
             Update::Status(s) => eprintln!("{s}"),
             Update::Token(t) => {
+                wrote = true;
                 print!("{t}");
                 let _ = std::io::stdout().flush();
             }
-            Update::Done(Some(e)) => {
-                println!();
-                anyhow::bail!(e);
+            Update::Done(outcome) => {
+                if wrote {
+                    println!();
+                }
+                if let Some(e) = outcome {
+                    anyhow::bail!(e);
+                }
             }
-            Update::Done(None) => println!(),
         }
     }
     Ok(())

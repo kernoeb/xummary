@@ -195,8 +195,11 @@ final class BriefingModel: ObservableObject {
         outBuffer.append(chunk)
         let text = Self.takeText(&outBuffer)
         guard !text.isEmpty else { return }
-        // The old briefing is only cleared once the new one starts arriving.
+        // The briefing you are reading is only cleared once real text arrives.
+        // Whitespace does not count: a run with nothing to say still closes its
+        // empty output with a newline, and that must not wipe the screen.
         if !replaced {
+            guard text.contains(where: { !$0.isWhitespace }) else { return }
             replaced = true
             self.text = ""
         }
