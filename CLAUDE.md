@@ -95,6 +95,16 @@ The `features` map in `x.rs` is a separate rotating thing. If a request returns 
 
 Each run reports its own breakdown (`600 posts · fetch 9s · wait 4s · total 41s`), where `wait` is time-to-first-token. Use it instead of guessing: a slow start and slow generation have different causes.
 
+**Effort is the single biggest lever, and `claude` defaults it to `high`.** Pass `--effort` (the CLI flag; `output_config.effort` on the API — `budget_tokens` is removed on Sonnet 5 and `MAX_THINKING_TOKENS` is not the knob). Measured on the same 600-post feed:
+
+| effort | wait (to first token) | total | handles named |
+|---|---|---|---|
+| low | 2 s | 39 s | 25 |
+| medium | 2 s | 36 s | 19 |
+| high | 158 s | 188 s | 36 |
+
+Summarising is judgement, not reasoning, so `low` is the default. Everything that looked like a hang was `high` spending two and a half minutes thinking before the first character.
+
 **Thinking is not streamed.** A run bills ~66% of its output tokens as thinking (`usage.output_tokens_details.thinking_tokens`), and none of it arrives as a delta — measured 556 thinking tokens against 0 streamed thinking characters. So the whole thinking phase is dead air on stdout and looks like a hang. That is what the elapsed ticker in `produce` exists for; do not remove it.
 
 **Overwriting a binary in place kills it.** On arm64 macOS, `cp` onto an existing signed binary invalidates its signature and the kernel SIGKILLs it at launch — exit `137`, no output, no error message, which reads exactly like a crash on startup. Always `rm -f` the destination first. This applies to `~/.local/bin/xummary` and to `/Applications/Xummary.app`.

@@ -45,6 +45,15 @@ struct Args {
 
     #[arg(
         long,
+        env = "XUMMARY_EFFORT",
+        default_value = "low",
+        help = "Reasoning effort: low, medium, high, xhigh, max. Summarising is not \
+                a reasoning task, so low is the default; claude's own default is high"
+    )]
+    effort: String,
+
+    #[arg(
+        long,
         env = "XUMMARY_MODEL",
         default_value = "claude-sonnet-5",
         help = "Claude model: sonnet is the balance, claude-haiku-4-5-20251001 is ~3x faster"
@@ -91,8 +100,9 @@ async fn run() -> Result<()> {
         let hours = args.hours;
         let lang = args.lang.clone();
         let model = args.model.clone();
+        let effort = args.effort.clone();
         async move {
-            if let Err(e) = produce(client, feeds, pages, hours, &lang, &model, &tx).await
+            if let Err(e) = produce(client, feeds, pages, hours, &lang, &model, &effort, &tx).await
             {
                 let _ = tx.send(Update::Done(Some(format!("{e:#}"))));
             } else {
@@ -128,6 +138,7 @@ async fn produce(
     hours: i64,
     lang: &str,
     model: &str,
+    effort: &str,
     tx: &mpsc::UnboundedSender<Update>,
 ) -> Result<()> {
     let started = std::time::Instant::now();
@@ -190,7 +201,7 @@ async fn produce(
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
     let prompt = llm::build_prompt(&all, hours, lang);
-    let outcome = llm::stream(&prompt, model, |token| {
+    let outcome = llm::stream(&prompt, model, effort, |token| {
         if let Some(handle) = ticker.take() {
             handle.abort();
         }

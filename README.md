@@ -91,6 +91,12 @@ It runs `claude` in an empty temporary directory with `--safe-mode`, so no
 CLAUDE.md, skill, hook or MCP server from whatever repo you are standing in can
 reach the briefing.
 
+Reasoning effort defaults to **low** (`--effort`, `XUMMARY_EFFORT`). `claude`
+defaults to `high`, which on a 600-post briefing spent 158 seconds thinking
+before printing a single character — 188 s total against 39 s at `low`, for the
+same eleven sections. `medium` measured the same as `low`. Raise it if you want
+more accounts credited per section.
+
 The default model is **Sonnet 5**. Opus is overkill for a summary. Haiku 4.5
 was faster on small prompts but slower and vaguer on a full 600-post one in the
 runs measured here. Override with `--model` or `XUMMARY_MODEL`.

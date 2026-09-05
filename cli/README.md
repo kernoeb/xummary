@@ -50,6 +50,7 @@ cp target/release/xummary ~/.local/bin/
 | `--hours <n>` | 24 | ignore posts older than this |
 | `--lang <name>` | French (or `$XUMMARY_LANG`) | language to write the briefing in |
 | `--model <id>` | `claude-sonnet-5` (or `$XUMMARY_MODEL`) | Claude model to use |
+| `--effort <level>` | `low` (or `$XUMMARY_EFFORT`) | low, medium, high, xhigh, max |
 | `--browser <name>` | first one found | chrome, brave, chromium, edge, vivaldi, arc |
 | `--for-you-only` | | skip the Following feed |
 | `--following-only` | | skip the For You feed |

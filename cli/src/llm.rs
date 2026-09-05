@@ -110,6 +110,7 @@ fn format_tweet(t: &Tweet) -> String {
 pub async fn stream(
     prompt: &str,
     model: &str,
+    effort: &str,
     mut on_token: impl FnMut(&str),
 ) -> Result<()> {
     // Claude Code reads CLAUDE.md, skills, hooks and MCP servers from wherever
@@ -132,6 +133,8 @@ pub async fn stream(
         .args(["--allowed-tools", ""])
         .args(["--system-prompt", SYSTEM_PROMPT]);
     command.args(["--model", model]);
+    // Grouping posts is judgement, not reasoning; claude defaults to high effort.
+    command.args(["--effort", effort]);
 
     let mut child = command
         .stdin(Stdio::piped())
