@@ -77,6 +77,18 @@ Full options in [`cli/README.md`](cli/README.md).
 4. **Summarize** — pipes one compact line per post to `claude -p` and streams
    the answer back.
 
+Both feeds are fetched at the same time, and paging stops as soon as a page
+falls outside the window, so a default run is about 35 seconds: 1 s for the
+session, 8 s fetching, and the rest writing.
+
+It runs `claude` in an empty temporary directory with `--safe-mode`, so no
+CLAUDE.md, skill, hook or MCP server from whatever repo you are standing in can
+reach the briefing.
+
+The default model is **Sonnet 5**. Opus is slower and overkill for a summary;
+Haiku 4.5 measured 4x slower than Sonnet on a 600-post prompt and named far
+fewer accounts. Override with `--model` or `XUMMARY_MODEL`.
+
 The macOS app has no X code and no Claude code of its own. It runs
 `xummary --print` and draws the result, so the parsing exists in one place.
 

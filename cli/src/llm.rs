@@ -17,6 +17,33 @@ pub const MAX_TWEETS: usize = 600;
 /// How much of claude's stderr to keep for the error message.
 const STDERR_KEPT: usize = 4096;
 
+/// An empty directory to run `claude` in, removed when the run ends however it
+/// ends. `create_dir` rather than `create_dir_all`, so a name someone else
+/// already planted is an error instead of a directory we do not own.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new() -> Result<Self> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("xummary-run-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&path).with_context(|| format!("create {}", path.display()))?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub fn build_prompt(tweets: &[Tweet], hours: i64, lang: &str) -> String {
     let sample: String = tweets.iter().map(format_tweet).collect();
 
@@ -73,21 +100,29 @@ fn format_tweet(t: &Tweet) -> String {
 /// Runs `claude -p` and hands each text delta to `on_token` as it arrives.
 pub async fn stream(
     prompt: &str,
-    model: Option<&str>,
+    model: &str,
     mut on_token: impl FnMut(&str),
 ) -> Result<()> {
+    // Claude Code reads CLAUDE.md, skills, hooks and MCP servers from wherever
+    // it starts. A briefing must not inherit any of that — whatever repo you
+    // happen to be standing in has nothing to do with your timeline — so it
+    // runs in an empty directory with every customization off. `--safe-mode`
+    // leaves auth alone, unlike `--bare`.
+    let scratch = Scratch::new()?;
+
     let mut command = Command::new("claude");
     command
+        .current_dir(scratch.path())
         .arg("-p")
         .args(["--output-format", "stream-json"])
         .arg("--include-partial-messages")
         .arg("--verbose")
+        .arg("--safe-mode")
+        .arg("--no-session-persistence")
         // No tools: this is one summary of text on stdin, not a coding session.
         .args(["--allowed-tools", ""])
         .args(["--system-prompt", SYSTEM_PROMPT]);
-    if let Some(model) = model {
-        command.args(["--model", model]);
-    }
+    command.args(["--model", model]);
 
     let mut child = command
         .stdin(Stdio::piped())

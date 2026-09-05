@@ -66,7 +66,10 @@ final class BriefingModel: ObservableObject {
             Task { @MainActor in self?.absorbProgress(chunk, token: token) }
         }
 
-        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) { [weak self] in
+        // `notify` takes a plain closure, so Swift infers this one as @MainActor
+        // from the enclosing method and then asserts that at runtime — on a
+        // global queue, which traps. @Sendable keeps it off the actor.
+        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) { @Sendable [weak self] in
             process.waitUntilExit()
             let code = process.terminationStatus
             Task { @MainActor in self?.finish(code, token: token) }

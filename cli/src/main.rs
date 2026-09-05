@@ -10,7 +10,7 @@ mod ui;
 mod x;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ struct Args {
     #[arg(
         long,
         default_value_t = 10,
-        help = "Pages to pull from each feed (~40 posts a page)"
+        help = "Ceiling on pages per feed; paging stops early once out of the window"
     )]
     pages: u32,
 
@@ -43,8 +43,13 @@ struct Args {
     )]
     lang: String,
 
-    #[arg(long, help = "Claude model to use (defaults to your CLI's)")]
-    model: Option<String>,
+    #[arg(
+        long,
+        env = "XUMMARY_MODEL",
+        default_value = "claude-sonnet-5",
+        help = "Claude model: sonnet is the balance, claude-haiku-4-5-20251001 is ~3x faster"
+    )]
+    model: String,
 
     #[arg(
         long,
@@ -87,7 +92,7 @@ async fn run() -> Result<()> {
         let lang = args.lang.clone();
         let model = args.model.clone();
         async move {
-            if let Err(e) = produce(client, feeds, pages, hours, &lang, model.as_deref(), &tx).await
+            if let Err(e) = produce(client, feeds, pages, hours, &lang, &model, &tx).await
             {
                 let _ = tx.send(Update::Done(Some(format!("{e:#}"))));
             } else {
@@ -122,15 +127,27 @@ async fn produce(
     pages: u32,
     hours: i64,
     lang: &str,
-    model: Option<&str>,
+    model: &str,
     tx: &mpsc::UnboundedSender<Update>,
 ) -> Result<()> {
-    let mut all = Vec::new();
+    // Pages within a feed are chained by cursor and must be walked in order, but
+    // the two feeds are independent — so they run side by side and the whole
+    // fetch costs one feed's worth of time instead of two.
+    let cutoff = Utc::now() - chrono::Duration::hours(hours);
+    let mut tasks = Vec::new();
     for feed in feeds {
-        all.extend(collect(&client, feed, pages, tx).await?);
+        let client = Arc::clone(&client);
+        let tx = tx.clone();
+        tasks.push(tokio::spawn(async move {
+            collect(&client, feed, pages, cutoff, &tx).await
+        }));
     }
 
-    let cutoff = Utc::now() - chrono::Duration::hours(hours);
+    let mut all = Vec::new();
+    for task in tasks {
+        all.extend(task.await.context("fetch task panicked")??);
+    }
+
     let mut seen = HashSet::new();
     all.retain(|t: &Tweet| t.created_at >= cutoff && seen.insert(t.id.clone()));
     all.sort_by_key(|t| std::cmp::Reverse(t.created_at));
@@ -161,6 +178,7 @@ async fn collect(
     client: &Client,
     feed: Feed,
     pages: u32,
+    cutoff: DateTime<Utc>,
     tx: &mpsc::UnboundedSender<Update>,
 ) -> Result<Vec<Tweet>> {
     let label = feed.label();
@@ -189,7 +207,20 @@ async fn collect(
         };
 
         let count = fetched.tweets.len();
+        let in_window = fetched.tweets.iter().filter(|t| t.created_at >= cutoff).count();
         out.extend(fetched.tweets);
+
+        // A whole page with nothing recent means we have paged out of the
+        // window. Following is chronological so that is exact; For You is
+        // ranked, but a page of 40 with nothing from the window is a good
+        // enough signal that digging deeper will not help either.
+        if count > 0 && in_window == 0 {
+            break;
+        }
+        // Enough on its own — the global cap will trim the rest anyway.
+        if out.len() >= llm::MAX_TWEETS {
+            break;
+        }
         match fetched.next_cursor {
             Some(c) if count > 0 => cursor = Some(c),
             _ => break,
