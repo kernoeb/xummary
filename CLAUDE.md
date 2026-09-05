@@ -73,7 +73,10 @@ Three things follow from it:
 
 - **Paging stops on posts you already have.** `collect` breaks on a page with no post that is both inside the window and absent from the cache. Same heuristic as before, one cutoff later.
 - **A refresh only summarizes what arrived since the last briefing.** The cutoff is the previous briefing's `at`, so the model sees 40 new posts, not 600. Under `MIN_POSTS` new posts the run says `nothing new since HH:MM` and exits **0** without calling `claude` — that is a normal outcome, not a failure.
+- **"New" means `seen_at`, never `created_at`.** For You is ranked, so it hands you posts hours after they were written — measured on a live refresh, 31 posts first surfaced with a median lag of about four hours, one of them 35 hours old. Selecting on `created_at > last briefing` dropped **all 31**, and the next refresh skipped them again as already cached, so they were lost for good. Each cached post carries the moment it first reached us, and that is what the window compares against. A cache line with no `seen_at` predates the field and counts as seen when written.
 - **A wider window is a new question.** A briefing stored with `hours: 24` does not satisfy a `--hours 48` run, so that one goes back to a full walk. That is why `hours` is in the record.
+
+Paging therefore stops against the whole window, not against the last briefing: a post written this morning and surfaced now is still wanted. That makes For You page deeper than Following on a refresh — it is ranked, so unseen posts are scattered rather than stacked at the top. `--pages` is the ceiling that keeps it bounded.
 
 `--no-cache` touches neither file: a full page walk over the whole window, and the cache is left as it was found. `--log` prints the stored briefings as JSON lines, oldest first — the macOS app calls it at launch instead of knowing the path.
 

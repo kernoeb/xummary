@@ -18,6 +18,28 @@ const MIN_RETENTION_HOURS: i64 = 72;
 /// How many past briefings to keep.
 const KEEP_BRIEFINGS: usize = 50;
 
+/// A cached post, with the moment it first reached us.
+///
+/// For You is ranked, not chronological: it surfaces posts hours after they
+/// were written. So "new to me" is `seen_at`, never `created_at` — filtering
+/// on when a post was written drops everything the ranker showed you late.
+#[derive(Debug, Clone)]
+pub struct Cached {
+    pub seen_at: DateTime<Utc>,
+    pub tweet: Tweet,
+}
+
+/// A cache line. `seen_at` is missing from anything written before it existed;
+/// those posts count as seen when they were written, which is what the old
+/// behaviour assumed anyway.
+#[derive(Serialize, Deserialize)]
+struct Row {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seen_at: Option<DateTime<Utc>>,
+    #[serde(flatten)]
+    tweet: Tweet,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Briefing {
     pub at: DateTime<Utc>,
@@ -51,22 +73,32 @@ impl Store {
 
     /// Cached posts no older than `cutoff`. A line that no longer parses is
     /// dropped: a cache written by an older build must never stop a refresh.
-    pub fn posts(&self, cutoff: DateTime<Utc>) -> Vec<Tweet> {
+    pub fn posts(&self, cutoff: DateTime<Utc>) -> Vec<Cached> {
         read(&self.posts_path())
             .lines()
-            .filter_map(|line| serde_json::from_str::<Tweet>(line).ok())
-            .filter(|t| t.created_at >= cutoff)
+            .filter_map(|line| serde_json::from_str::<Row>(line).ok())
+            .map(|row| Cached {
+                seen_at: row.seen_at.unwrap_or(row.tweet.created_at),
+                tweet: row.tweet,
+            })
+            .filter(|c| c.tweet.created_at >= cutoff)
             .collect()
     }
 
     /// Replaces the cache with `posts`, dropping anything past retention.
-    pub fn save_posts(&self, posts: &[Tweet], hours: i64) -> Result<()> {
+    pub fn save_posts(&self, posts: &[Cached], hours: i64) -> Result<()> {
         let keep = Utc::now() - chrono::Duration::hours(hours.max(MIN_RETENTION_HOURS));
         let body = join(
             posts
                 .iter()
-                .filter(|t| t.created_at >= keep)
-                .filter_map(|t| serde_json::to_string(t).ok()),
+                .filter(|c| c.tweet.created_at >= keep)
+                .filter_map(|c| {
+                    serde_json::to_string(&Row {
+                        seen_at: Some(c.seen_at),
+                        tweet: c.tweet.clone(),
+                    })
+                    .ok()
+                }),
         );
         write_atomic(&self.posts_path(), &body)
     }
@@ -174,27 +206,58 @@ mod tests {
     #[test]
     fn posts_older_than_the_cutoff_are_not_returned() {
         let (store, _dir) = store();
-        let mut old = tweet("old");
-        old.created_at = at(1);
-        let mut fresh = tweet("fresh");
-        fresh.created_at = at(20);
+        let old = cached("old", at(1), at(1));
+        let fresh = cached("fresh", at(20), at(20));
         store.save_posts(&[old, fresh], 24).unwrap();
         let kept = store.posts(at(10));
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].id, "fresh");
+        assert_eq!(kept[0].tweet.id, "fresh");
     }
 
     #[test]
     fn saving_drops_posts_past_retention() {
+        let now = Utc::now();
         let (store, _dir) = store();
-        let mut ancient = tweet("ancient");
-        ancient.created_at = Utc::now() - chrono::Duration::hours(MIN_RETENTION_HOURS + 1);
-        let mut recent = tweet("recent");
-        recent.created_at = Utc::now();
+        let ancient = cached(
+            "ancient",
+            now - chrono::Duration::hours(MIN_RETENTION_HOURS + 1),
+            now,
+        );
+        let recent = cached("recent", now, now);
         store.save_posts(&[ancient, recent], 24).unwrap();
         let kept = store.posts(Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap());
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].id, "recent");
+        assert_eq!(kept[0].tweet.id, "recent");
+    }
+
+    #[test]
+    fn when_a_post_reached_us_survives_a_round_trip() {
+        let (store, _dir) = store();
+        // Written at 09:00, but For You only showed it to us at 20:00.
+        store.save_posts(&[cached("late", at(9), at(20))], 24).unwrap();
+        let kept = store.posts(at(1));
+        assert_eq!(kept[0].tweet.created_at, at(9));
+        assert_eq!(kept[0].seen_at, at(20));
+    }
+
+    #[test]
+    fn a_line_without_seen_at_counts_as_seen_when_written() {
+        let (store, _dir) = store();
+        let row = serde_json::to_string(&Row {
+            seen_at: None,
+            tweet: tweet("old-build"),
+        })
+        .unwrap();
+        std::fs::write(store.posts_path(), format!("{row}\n")).unwrap();
+        let kept = store.posts(at(1));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].seen_at, kept[0].tweet.created_at);
+    }
+
+    fn cached(id: &str, created_at: DateTime<Utc>, seen_at: DateTime<Utc>) -> Cached {
+        let mut tweet = tweet(id);
+        tweet.created_at = created_at;
+        Cached { seen_at, tweet }
     }
 
     fn tweet(id: &str) -> Tweet {

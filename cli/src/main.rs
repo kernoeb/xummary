@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use std::collections::HashSet;
 use std::sync::Arc;
-use store::{Briefing, Store};
+use store::{Briefing, Cached, Store};
 use tokio::sync::mpsc;
 use ui::Update;
 use x::{Client, Feed, Tweet};
@@ -203,7 +203,7 @@ async fn produce(
     // window has to walk the pages again, even though its first page is all
     // posts we already hold — the ones it needs are behind them.
     let known: Arc<HashSet<String>> = Arc::new(if previous.is_some() {
-        cached.iter().map(|t| t.id.clone()).collect()
+        cached.iter().map(|c| c.tweet.id.clone()).collect()
     } else {
         HashSet::new()
     });
@@ -213,25 +213,34 @@ async fn produce(
         let known = Arc::clone(&known);
         let tx = tx.clone();
         tasks.push(tokio::spawn(async move {
-            collect(&client, feed, pages, since, &known, &tx).await
+            collect(&client, feed, pages, window, &known, &tx).await
         }));
     }
 
-    let mut all = cached;
+    let mut merged = cached;
+    let mut seen: HashSet<String> = merged.iter().map(|c| c.tweet.id.clone()).collect();
     for task in tasks {
-        all.extend(task.await.context("fetch task panicked")??);
+        for tweet in task.await.context("fetch task panicked")?? {
+            if seen.insert(tweet.id.clone()) {
+                merged.push(Cached { seen_at: now, tweet });
+            }
+        }
     }
-
-    let mut seen = HashSet::new();
-    all.retain(|t: &Tweet| seen.insert(t.id.clone()));
-    all.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+    merged.sort_by_key(|c| std::cmp::Reverse(c.tweet.created_at));
     // Save before trimming to the window: what falls outside it today may be
     // inside a wider one tomorrow.
     if cache {
-        store.save_posts(&all, hours)?;
+        store.save_posts(&merged, hours)?;
     }
 
-    all.retain(|t| t.created_at >= window && t.created_at > since);
+    // What to summarize is what reached you since the last briefing, not what
+    // was written since. For You surfaces posts hours late, and judging them by
+    // their timestamp throws every one of them away.
+    let mut all: Vec<Tweet> = merged
+        .into_iter()
+        .filter(|c| c.tweet.created_at >= window && c.seen_at > since)
+        .map(|c| c.tweet)
+        .collect();
     all.truncate(llm::MAX_TWEETS);
 
     if all.len() < MIN_POSTS {
