@@ -28,6 +28,16 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .refreshBriefing)) { _ in
             model.run()
         }
+        // A new-story mark survives until you have looked at it, so the model
+        // needs to know when the window is actually in front of you.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.activeChanged(true)
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.willResignActiveNotification)) { _ in
+            model.activeChanged(false)
+        }
     }
 
     private var header: some View {

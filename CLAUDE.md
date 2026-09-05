@@ -75,12 +75,17 @@ Four things to know:
 
 - **Paging stops on posts you already have.** `collect` breaks on a page with no post that is both inside the window and absent from the cache.
 - **"New" means `seen_at`, never `created_at`.** For You is ranked, so it hands you posts hours after they were written — measured on a live refresh, 31 posts first surfaced with a median lag of about four hours, one of them 35 hours old. Selecting on `created_at` dropped **all 31**, and the next refresh skipped them again as already cached, so they were lost for good. A cache line with no `seen_at` predates the field and counts as seen when written.
-- **A refresh under `MIN_NEW_POSTS` newly seen posts changes nothing.** It reports `nothing new since HH:MM · N posts` and exits **0** without calling `claude`. Rewriting the whole briefing costs a whole summary, and it would strip the marks off stories you had not read yet.
-- **The marks.** `build_prompt` lists the headings of the briefing you already have and asks for `[new]` on the end of any heading that is not among them. Both front ends strip it — `split_mark` in `ui.rs`, `Markdown.splitMark` in Swift — and draw a badge instead. The mark is English whatever the briefing's language, so a plain suffix match is enough. `store::headings` strips it too, or a story would look new forever.
+- **A refresh under `MIN_NEW_POSTS` newly seen posts changes nothing.** It reports `nothing new since HH:MM`, or `only N new posts since HH:MM`, and exits **0** without calling `claude`. Rewriting the whole briefing costs a whole summary.
+- **The marks.** `build_prompt` lists the headings of the briefing you already saw and asks for `[new]` on the end of any heading that is not among them. Both front ends strip it — `split_mark` in `ui.rs`, `Markdown.splitMark` in Swift — and draw a badge instead. The mark is English whatever the briefing's language, so a plain suffix match is enough. `store::headings` strips it too, or a story would look new forever.
+- **A mark lives until you look at it, not until the text is replaced.** The baseline is `last_read()`, the newest briefing with a `read_at` — not `last_briefing()`. Otherwise a refresh you never opened clears the marks and the stories go by unseen. The app calls `xummary --mark-read` after the window has been active for four seconds with a finished briefing on screen; the CLI owns the write, so the file format stays in one place. Until anything has been read the baseline falls back to the last briefing written.
+
+The two baselines are different questions and must not be merged. `previous` — the last briefing **written** — decides how much has arrived and whether regenerating is worth it. `baseline` — the last briefing **read** — decides what gets marked.
 
 Paging stops against the whole window, not against the last briefing: a post written this morning and surfaced now is still wanted. That makes For You page deeper than Following on a refresh — it is ranked, so unseen posts are scattered rather than stacked at the top. `--pages` is the ceiling that keeps it bounded.
 
-`--no-cache` touches neither file: a full page walk over the whole window, and the cache is left as it was found. `--log` prints the stored briefings as JSON lines, oldest first — the macOS app calls it at launch to put the last one on screen before the refresh finishes.
+`--no-cache` touches neither file: a full page walk over the whole window, and the cache is left as it was found. `--log` prints the stored briefings as JSON lines, oldest first — the macOS app calls it at launch to put the last one on screen before the refresh finishes. `--mark-read` records that the newest briefing has been seen.
+
+**A run with nothing new writes nothing to stdout, not even a closing newline.** The app treats any output as the new briefing arriving, so one stray byte cleared the stored briefing and left a blank pane. `print_plain` tracks whether it wrote anything, and the app ignores whitespace-only output — both, because neither should be the only guard.
 
 ## Facts that will bite you
 

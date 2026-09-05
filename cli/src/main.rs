@@ -85,6 +85,14 @@ struct Args {
 
     #[arg(long, help = "Print the briefings kept from past runs as JSON lines, then exit")]
     log: bool,
+
+    #[arg(
+        long,
+        help = "Record that the newest briefing has been read, then exit. New-story \
+                marks survive until this is called, so the app calls it once you have \
+                actually had the briefing in front of you"
+    )]
+    mark_read: bool,
 }
 
 #[tokio::main]
@@ -102,6 +110,9 @@ async fn run() -> Result<()> {
 
     if args.log {
         return print_log(&store);
+    }
+    if args.mark_read {
+        return store.mark_newest_read();
     }
 
     let (session, browser) = cookies::load(args.browser.as_deref())?;
@@ -202,6 +213,14 @@ async fn produce(
         .filter(|b| b.hours >= hours && b.at >= window);
     let since = previous.as_ref().map_or(window, |b| b.at);
 
+    // What to mark is judged against the last briefing the reader actually
+    // read, not the last one written. Otherwise a refresh they never looked at
+    // clears the marks, and stories go by unseen and unmarked. Until anything
+    // has been read, the last briefing written is the best guess.
+    let baseline = if cache { store.last_read() } else { None }
+        .filter(|b| b.at >= window)
+        .or_else(|| previous.clone());
+
     // Pages within a feed are chained by cursor and must be walked in order, but
     // the two feeds are independent — so they run side by side and the whole
     // fetch costs one feed's worth of time instead of two.
@@ -263,10 +282,8 @@ async fn produce(
 
     // Refreshing twice in a row is normal and should cost nothing. Leave the
     // briefing on screen, marks and all, rather than rewrite it for six posts.
-    let last_read = previous
-        .as_ref()
-        .map(|b| b.at.with_timezone(&chrono::Local).format("%H:%M").to_string());
-    if let Some(at) = &last_read {
+    let previous_at = previous.as_ref().map(|b| clock(b.at));
+    if let Some(at) = &previous_at {
         if fresh < MIN_NEW_POSTS {
             let _ = tx.send(Update::Status(match fresh {
                 0 => format!("nothing new since {at}"),
@@ -304,12 +321,13 @@ async fn produce(
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
     let mut text = String::new();
-    // The briefing the reader already has. Its stories keep their plain
+    // The briefing the reader has already seen. Its stories keep their plain
     // heading; everything else is marked, so a refresh is scannable.
-    let covered = previous
+    let covered = baseline
         .as_ref()
         .map_or(Vec::new(), |b| store::headings(&b.text));
-    let seen = last_read.as_ref().map(|at| llm::Previous {
+    let read_at = baseline.as_ref().map(|b| clock(b.at));
+    let seen = read_at.as_ref().map(|at| llm::Previous {
         at,
         headings: &covered,
     });
@@ -337,6 +355,7 @@ async fn produce(
             hours,
             posts,
             text: text.trim().to_string(),
+            read_at: None,
         })?;
     }
 
@@ -347,6 +366,11 @@ async fn produce(
         started.elapsed().as_secs_f64()
     )));
     Ok(())
+}
+
+/// A timestamp as the reader's own wall clock, for a prompt or a status line.
+fn clock(at: DateTime<Utc>) -> String {
+    at.with_timezone(&chrono::Local).format("%H:%M").to_string()
 }
 
 /// Page through one feed until it stops bringing posts we do not already have.

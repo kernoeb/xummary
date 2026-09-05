@@ -47,6 +47,11 @@ pub struct Briefing {
     pub hours: i64,
     pub posts: usize,
     pub text: String,
+    /// When the reader actually had this briefing in front of them. Absent
+    /// until they do, which is what keeps a new-story mark alive until it has
+    /// been seen rather than until the text is replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<DateTime<Utc>>,
 }
 
 pub struct Store {
@@ -117,6 +122,30 @@ impl Store {
         self.briefings().into_iter().max_by_key(|b| b.at)
     }
 
+    /// The newest briefing the reader has actually seen.
+    pub fn last_read(&self) -> Option<Briefing> {
+        self.briefings()
+            .into_iter()
+            .filter(|b| b.read_at.is_some())
+            .max_by_key(|b| b.at)
+    }
+
+    /// Records that the reader has seen the newest briefing. The app calls
+    /// this rather than writing the file itself, so the format stays in one
+    /// place. Nothing stored yet is not an error.
+    pub fn mark_newest_read(&self) -> Result<()> {
+        let mut all = self.briefings();
+        let Some(newest) = all
+            .iter_mut()
+            .max_by_key(|b| b.at)
+        else {
+            return Ok(());
+        };
+        newest.read_at = Some(Utc::now());
+        let body = join(all.iter().filter_map(|b| serde_json::to_string(b).ok()));
+        write_atomic(&self.briefings_path(), &body)
+    }
+
     pub fn add_briefing(&self, briefing: &Briefing) -> Result<()> {
         let mut all = self.briefings();
         all.push(briefing.clone());
@@ -179,6 +208,7 @@ mod tests {
             hours: 24,
             posts: 100,
             text: text.into(),
+            read_at: None,
         }
     }
 
@@ -202,6 +232,29 @@ mod tests {
         store.add_briefing(&briefing(at(18), "evening")).unwrap();
         store.add_briefing(&briefing(at(9), "morning")).unwrap();
         assert_eq!(store.last_briefing().unwrap().text, "evening");
+    }
+
+    #[test]
+    fn marking_read_applies_to_the_newest_briefing_only() {
+        let (store, _dir) = store();
+        assert!(store.mark_newest_read().is_ok(), "nothing stored is not an error");
+        store.add_briefing(&briefing(at(9), "morning")).unwrap();
+        store.add_briefing(&briefing(at(18), "evening")).unwrap();
+        store.mark_newest_read().unwrap();
+
+        assert_eq!(store.last_read().unwrap().text, "evening");
+        let morning = store.briefings().into_iter().find(|b| b.text == "morning").unwrap();
+        assert!(morning.read_at.is_none());
+    }
+
+    #[test]
+    fn an_unread_briefing_is_not_the_last_read() {
+        let (store, _dir) = store();
+        store.add_briefing(&briefing(at(9), "morning")).unwrap();
+        store.mark_newest_read().unwrap();
+        store.add_briefing(&briefing(at(18), "evening")).unwrap();
+        // The evening one is newer but has not been looked at.
+        assert_eq!(store.last_read().unwrap().text, "morning");
     }
 
     #[test]

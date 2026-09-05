@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// A briefing the CLI has stored.
@@ -31,6 +32,9 @@ final class BriefingModel: ObservableObject {
     /// you were reading stays up — a run with nothing new must not blank it.
     private var replaced = false
     private var historyLoaded = false
+    /// Whether the briefing on screen has been reported as read.
+    private var markedRead = false
+    private var readTimer: Timer?
     /// Tells a finished run apart from the one now on screen.
     private var generation = 0
     private var outBuffer = Data()
@@ -48,6 +52,9 @@ final class BriefingModel: ObservableObject {
         let token = generation
         livePosts = 0
         replaced = false
+        markedRead = false
+        readTimer?.invalidate()
+        readTimer = nil
         lastError = ""
         errorMessage = nil
         outBuffer = Data()
@@ -103,6 +110,41 @@ final class BriefingModel: ObservableObject {
         isRunning = false
     }
 
+    /// How long the briefing has to be in front of you before it counts as
+    /// read. Long enough that alt-tabbing past the window does not count.
+    private static let readAfter: TimeInterval = 4
+
+    /// Call when the app comes to the front or goes away. A new-story mark
+    /// lives until you have actually looked at the briefing carrying it, so
+    /// "read" is time spent with the window active, not the text arriving.
+    func activeChanged(_ isActive: Bool) {
+        readTimer?.invalidate()
+        readTimer = nil
+        guard isActive else { return }
+        guard !markedRead, !isRunning, !text.isEmpty else { return }
+        readTimer = Timer.scheduledTimer(withTimeInterval: Self.readAfter, repeats: false) {
+            [weak self] _ in
+            Task { @MainActor in self?.markRead() }
+        }
+    }
+
+    private func markRead() {
+        guard !markedRead, !isRunning, !text.isEmpty else { return }
+        markedRead = true
+        guard let binary = Self.locateBinary() else { return }
+        let environment = Self.childEnvironment()
+        Task.detached(priority: .background) {
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = ["--mark-read"]
+            process.environment = environment
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try? process.run()
+            process.waitUntilExit()
+        }
+    }
+
     /// Puts the last stored briefing on screen at launch, so the window has
     /// something to read while the refresh runs.
     func loadHistory() {
@@ -123,6 +165,7 @@ final class BriefingModel: ObservableObject {
         text = stored.text
         updatedAt = stored.at
         posts = stored.posts
+        activeChanged(NSApplication.shared.isActive)
     }
 
     /// `xummary --log` prints the stored briefings as JSON lines, oldest first.
@@ -278,9 +321,15 @@ final class BriefingModel: ObservableObject {
         // A run with nothing new writes nothing and says so in its status. The
         // briefing on screen is still the current one, so leave it and its time
         // alone — the status stays in the footer.
-        guard replaced else { return }
+        guard replaced else {
+            // Nothing was rewritten, so the briefing on screen is still the one
+            // whose marks are waiting to be seen. Keep counting.
+            activeChanged(NSApplication.shared.isActive)
+            return
+        }
         updatedAt = Date()
         posts = livePosts
+        activeChanged(NSApplication.shared.isActive)
     }
 
     /// Prefers the copy bundled inside the .app, then the usual install spots.
