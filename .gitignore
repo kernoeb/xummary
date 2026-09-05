@@ -1,0 +1,10 @@
+# Rust
+/cli/target/
+
+# Swift
+/macos/.build/
+/macos/Xummary.app/
+/macos/.swiftpm/
+
+# macOS
+.DS_Store
