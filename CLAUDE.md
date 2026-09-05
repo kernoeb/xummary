@@ -26,6 +26,7 @@ swift build -c release
 ./build.sh                          # -> Xummary.app, with the CLI embedded from ~/.local/bin/xummary
 ICON_PALETTE=paper ./build.sh       # night (default) | paper | dark
 XUMMARY_BIN=/path/to/xummary ./build.sh
+./tools/test.sh                     # inline markdown parser checks
 
 # install — always remove first, see below
 rm -f ~/.local/bin/xummary && cp cli/target/release/xummary ~/.local/bin/
@@ -99,6 +100,8 @@ Each run reports its own breakdown (`600 posts · fetch 9s · wait 4s · total 4
 **Overwriting a binary in place kills it.** On arm64 macOS, `cp` onto an existing signed binary invalidates its signature and the kernel SIGKILLs it at launch — exit `137`, no output, no error message, which reads exactly like a crash on startup. Always `rm -f` the destination first. This applies to `~/.local/bin/xummary` and to `/Applications/Xummary.app`.
 
 **Signing** — `build.sh` signs ad-hoc, so every rebuild is a new identity to TCC and macOS re-asks for permissions. Not a bug; a Developer ID would be needed to stop it.
+
+**Underscores are not emphasis** (`macos/Sources/Xummary/Markdown.swift`). They are markdown emphasis in theory and part of a handle in practice: `Frederic_Molas` once paired with the trailing `_` of `@LLCoolChris_` and italicised the whole paragraph between them. Only `*` opens an italic. The app is a single executable target with nowhere to hang XCTest, so `tools/test.sh` compiles the real source against `tools/markdown-tests.swift`; add a case there when you touch the parser.
 
 ## Prompt design
 

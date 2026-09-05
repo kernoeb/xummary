@@ -67,7 +67,11 @@ enum Markdown {
                 continue
             }
 
-            if c == "*" || c == "_", let end = find(chars, open: i + 1, close: String(c)) {
+            // Only `*` opens an italic. `_` is markdown emphasis too, but it is
+            // far more often part of a handle — `Frederic_Molas` paired with a
+            // trailing `_` in `@LLCoolChris_` and italicised the paragraph
+            // between them.
+            if c == "*", let end = find(chars, open: i + 1, close: "*") {
                 flush()
                 runs.append(.italic(String(chars[(i + 1)..<end])))
                 i = end + 1
