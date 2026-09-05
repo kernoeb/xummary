@@ -292,7 +292,14 @@ async fn produce(
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
     let mut text = String::new();
-    let prompt = llm::build_prompt(&all, &span, lang);
+    // Everything earlier briefings in this window already told you, so the
+    // model reports what moved instead of introducing the same story again.
+    let covered = if cache {
+        store.covered_since(window)
+    } else {
+        Vec::new()
+    };
+    let prompt = llm::build_prompt(&all, &span, &covered, lang);
     let outcome = llm::stream(&prompt, model, effort, |token| {
         if let Some(handle) = ticker.take() {
             handle.abort();

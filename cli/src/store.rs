@@ -115,6 +115,17 @@ impl Store {
         self.briefings().pop()
     }
 
+    /// Headings from briefings no older than `cutoff`, newest first, so a
+    /// refresh can be told which stories it has already reported.
+    pub fn covered_since(&self, cutoff: DateTime<Utc>) -> Vec<String> {
+        self.briefings()
+            .iter()
+            .rev()
+            .filter(|b| b.at >= cutoff)
+            .flat_map(|b| headings(&b.text))
+            .collect()
+    }
+
     pub fn add_briefing(&self, briefing: &Briefing) -> Result<()> {
         let mut all = self.briefings();
         all.push(briefing.clone());
@@ -122,6 +133,15 @@ impl Store {
         let body = join(all[start..].iter().filter_map(|b| serde_json::to_string(b).ok()));
         write_atomic(&self.briefings_path(), &body)
     }
+}
+
+/// The `## ` lines of a briefing. `Also` is the leftovers bin, not a story.
+fn headings(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("## "))
+        .filter(|heading| !heading.eq_ignore_ascii_case("also"))
+        .map(str::to_string)
+        .collect()
 }
 
 fn read(path: &Path) -> String {
@@ -228,6 +248,29 @@ mod tests {
         let kept = store.posts(Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap());
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].tweet.id, "recent");
+    }
+
+    #[test]
+    fn covered_stories_are_the_headings_newest_first() {
+        let (store, _dir) = store();
+        store
+            .add_briefing(&briefing(at(9), "## Morning story\n\nText.\n\n## Also\n- a leftover"))
+            .unwrap();
+        store
+            .add_briefing(&briefing(at(18), "## Evening story\n\nText."))
+            .unwrap();
+        assert_eq!(
+            store.covered_since(at(1)),
+            vec!["Evening story", "Morning story"]
+        );
+    }
+
+    #[test]
+    fn a_briefing_older_than_the_window_is_not_covered() {
+        let (store, _dir) = store();
+        store.add_briefing(&briefing(at(2), "## Old story")).unwrap();
+        store.add_briefing(&briefing(at(20), "## New story")).unwrap();
+        assert_eq!(store.covered_since(at(10)), vec!["New story"]);
     }
 
     #[test]

@@ -44,11 +44,19 @@ impl Drop for Scratch {
     }
 }
 
+/// Headings from earlier briefings still inside the window. A refresh sees
+/// posts, not what it already told you, so without this a running story gets
+/// the same section again every twenty minutes.
+const MAX_COVERED: usize = 40;
+
 /// `span` says what stretch of the timeline the posts cover — the whole
 /// window on a first run, only what arrived since the last briefing on a
 /// refresh. It goes in the prompt so the model pitches the briefing right.
-pub fn build_prompt(tweets: &[Tweet], span: &str, lang: &str) -> String {
+///
+/// `covered` names the stories earlier briefings already told, newest first.
+pub fn build_prompt(tweets: &[Tweet], span: &str, covered: &[String], lang: &str) -> String {
     let sample: String = tweets.iter().map(format_tweet).collect();
+    let already = covered_section(covered);
 
     format!(
         "Below are {count} posts from my X timeline, {span}, newest first. \
@@ -64,6 +72,7 @@ one line — never merged into another section.\n\n\
 Then one last section:\n\
 ## Also\n\
 Up to eight single-line mentions, one per story, each ending with the @handle that posted it.\n\n\
+{already}\
 Rules:\n\
 - One story per section. Two things that share only a theme — both are \
 scandals, both are model releases, both are French politics — are two \
@@ -79,6 +88,26 @@ section without listing two things, it is two sections.\n\
 Posts (newest first):\n{sample}\n\
 Now write the briefing. Start with the first `## ` heading.",
         count = tweets.len(),
+    )
+}
+
+/// The "you already said this" block, empty on a first briefing.
+fn covered_section(covered: &[String]) -> String {
+    if covered.is_empty() {
+        return String::new();
+    }
+    let list: String = covered
+        .iter()
+        .take(MAX_COVERED)
+        .map(|h| format!("- {h}\n"))
+        .collect();
+
+    format!(
+        "I have already read a briefing today covering these stories:\n{list}\n\
+Skip a story on that list. Write about it only if something actually \
+happened since — a new fact, a reaction that changes it, a next step — and \
+then write only what is new, never the background I already have. \
+If nothing moved, leave it out entirely, out of Also too.\n\n"
     )
 }
 
@@ -265,11 +294,29 @@ mod tests {
 
     #[test]
     fn the_prompt_carries_the_count_and_the_language() {
-        let prompt = build_prompt(&[tweet("alice", "hi")], "covering the last 24 hours", "French");
+        let prompt = build_prompt(
+            &[tweet("alice", "hi")],
+            "covering the last 24 hours",
+            &[],
+            "French",
+        );
         assert!(prompt.contains("Below are 1 posts"));
         assert!(prompt.contains("covering the last 24 hours"));
         assert!(prompt.contains("Write my briefing in French"));
         assert!(prompt.contains("Write every word in French"));
         assert!(prompt.contains("@alice"));
+        assert!(!prompt.contains("already read a briefing"));
+    }
+
+    #[test]
+    fn a_refresh_is_told_which_stories_it_already_reported() {
+        let prompt = build_prompt(
+            &[tweet("alice", "hi")],
+            "since my last briefing, 20 minutes ago",
+            &["ZEVENT franchit douze millions".into(), "Astra".into()],
+            "French",
+        );
+        assert!(prompt.contains("already read a briefing"));
+        assert!(prompt.contains("- ZEVENT franchit douze millions\n- Astra\n"));
     }
 }
