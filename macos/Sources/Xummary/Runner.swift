@@ -167,7 +167,6 @@ final class BriefingModel: ObservableObject {
             status = "failed"
         } else {
             finishedAt = Date()
-            status = ""
         }
     }
 

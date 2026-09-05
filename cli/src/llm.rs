@@ -50,15 +50,24 @@ pub fn build_prompt(tweets: &[Tweet], hours: i64, lang: &str) -> String {
     format!(
         "Below are {count} posts from my X timeline, covering the last {hours} hours, newest first. \
 Write my briefing in {lang}.\n\n\
-Exact format, nothing else. For each of the 5 to 8 topics that actually matter, \
-in order of how much of the timeline they take up:\n\
-## Topic name, six words at most\n\
+Exact format, nothing else. One section per story, where a story is one \
+event, one launch, one announcement, one controversy:\n\
+## Heading naming that one story, six words at most\n\
 Two to four sentences: what happened, and what people are saying about it. \
-Name the accounts driving it as @handle. At most one short quoted phrase per topic.\n\n\
+Name the accounts driving it as @handle. At most one short quoted phrase per section.\n\n\
+Write one section per story, up to ten, ordered by how much of the \
+timeline they take up. A story that does not earn a section goes in Also as \
+one line — never merged into another section.\n\n\
 Then one last section:\n\
 ## Also\n\
-Up to six single-line mentions of smaller things, each ending with the @handle that posted it.\n\n\
+Up to eight single-line mentions, one per story, each ending with the @handle that posted it.\n\n\
 Rules:\n\
+- One story per section. Two things that share only a theme — both are \
+scandals, both are model releases, both are French politics — are two \
+stories, not one. Give them a section each, or put the smaller one in Also. \
+Merging them under one heading invents a link that is not there.\n\
+- Never a heading that joins two subjects with \"and\". If you cannot name the \
+section without listing two things, it is two sections.\n\
 - Write every word in {lang}, headings included. Leave @handles and product names as they are.\n\
 - Drop rage-bait, engagement farming, ads, and takes with no information in them. Never say that you dropped anything.\n\
 - Never invent a post. Every claim must trace to a post below.\n\

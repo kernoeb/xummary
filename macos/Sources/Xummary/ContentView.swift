@@ -13,7 +13,14 @@ struct ContentView: View {
             content
             footer
         }
-        .background(theme.background)
+        // Blur behind everything, with a thin wash of the theme colour on top
+        // so text keeps its contrast over a bright wallpaper.
+        .background {
+            Glass()
+                .overlay(theme.background.opacity(theme.glassWash))
+                .ignoresSafeArea()
+        }
+        .background(TransparentWindow())
         .onAppear { model.run() }
         .onReceive(NotificationCenter.default.publisher(for: .refreshBriefing)) { _ in
             model.run()

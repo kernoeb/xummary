@@ -130,6 +130,8 @@ async fn produce(
     model: &str,
     tx: &mpsc::UnboundedSender<Update>,
 ) -> Result<()> {
+    let started = std::time::Instant::now();
+
     // Pages within a feed are chained by cursor and must be walked in order, but
     // the two feeds are independent — so they run side by side and the whole
     // fetch costs one feed's worth of time instead of two.
@@ -160,17 +162,32 @@ async fn produce(
         );
     }
 
+    let fetched = started.elapsed();
+    let posts = all.len();
     let _ = tx.send(Update::Status(format!(
-        "{} posts · last {hours}h · summarizing",
-        all.len()
+        "{posts} posts · last {hours}h · summarizing"
     )));
 
+    // Where a run actually spends its time, reported every run rather than
+    // guessed at. A slow start and a slow finish have different causes.
+    let mut first_token: Option<std::time::Duration> = None;
     let prompt = llm::build_prompt(&all, hours, lang);
     llm::stream(&prompt, model, |token| {
+        if first_token.is_none() {
+            first_token = Some(started.elapsed());
+        }
         let _ = tx.send(Update::Token(token.to_string()));
     })
     .await
-    .context("summary failed")
+    .context("summary failed")?;
+
+    let wait = first_token.map_or(0.0, |t| (t - fetched).as_secs_f64());
+    let _ = tx.send(Update::Status(format!(
+        "{posts} posts · fetch {:.0}s · wait {wait:.0}s · total {:.0}s",
+        fetched.as_secs_f64(),
+        started.elapsed().as_secs_f64()
+    )));
+    Ok(())
 }
 
 /// Page through one feed, reporting progress as it goes.
