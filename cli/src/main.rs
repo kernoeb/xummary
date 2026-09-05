@@ -6,6 +6,7 @@
 
 mod cookies;
 mod llm;
+mod store;
 mod ui;
 mod x;
 
@@ -14,6 +15,7 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use std::collections::HashSet;
 use std::sync::Arc;
+use store::{Briefing, Store};
 use tokio::sync::mpsc;
 use ui::Update;
 use x::{Client, Feed, Tweet};
@@ -74,6 +76,15 @@ struct Args {
 
     #[arg(long, help = "Print to stdout instead of opening the pane")]
     print: bool,
+
+    #[arg(
+        long,
+        help = "Ignore what past runs cached: walk every page and summarize the whole window"
+    )]
+    no_cache: bool,
+
+    #[arg(long, help = "Print the briefings kept from past runs as JSON lines, then exit")]
+    log: bool,
 }
 
 #[tokio::main]
@@ -87,6 +98,11 @@ async fn main() {
 async fn run() -> Result<()> {
     let args = Args::parse();
     let feeds = feeds(&args)?;
+    let store = Store::open()?;
+
+    if args.log {
+        return print_log(&store);
+    }
 
     let (session, browser) = cookies::load(args.browser.as_deref())?;
     let client = Arc::new(Client::new(session)?);
@@ -101,9 +117,12 @@ async fn run() -> Result<()> {
         let lang = args.lang.clone();
         let model = args.model.clone();
         let effort = args.effort.clone();
+        let cache = !args.no_cache;
         async move {
-            if let Err(e) = produce(client, feeds, pages, hours, &lang, &model, &effort, &tx).await
-            {
+            let run = produce(
+                client, feeds, store, cache, pages, hours, &lang, &model, &effort, &tx,
+            );
+            if let Err(e) = run.await {
                 let _ = tx.send(Update::Done(Some(format!("{e:#}"))));
             } else {
                 let _ = tx.send(Update::Done(None));
@@ -121,6 +140,15 @@ async fn run() -> Result<()> {
     result
 }
 
+/// `--log`: the stored briefings as JSON lines, oldest first. The app reads
+/// this instead of knowing where the cache lives.
+fn print_log(store: &Store) -> Result<()> {
+    for briefing in store.briefings() {
+        println!("{}", serde_json::to_string(&briefing)?);
+    }
+    Ok(())
+}
+
 fn feeds(args: &Args) -> Result<Vec<Feed>> {
     match (args.for_you_only, args.following_only) {
         (true, true) => anyhow::bail!("--for-you-only and --following-only cancel each other out"),
@@ -130,10 +158,19 @@ fn feeds(args: &Args) -> Result<Vec<Feed>> {
     }
 }
 
-/// Fetch every requested feed, keep what is recent, then stream one summary.
+/// A briefing built on fewer posts than this is noise, not news.
+const MIN_POSTS: usize = 5;
+
+/// Fetch what is new, keep what is recent, then stream one summary.
+///
+/// A refresh only has to cover the posts that arrived since the last briefing:
+/// the rest of the window is already on disk, and you already read it.
+#[allow(clippy::too_many_arguments)]
 async fn produce(
     client: Arc<Client>,
     feeds: Vec<Feed>,
+    store: Store,
+    cache: bool,
     pages: u32,
     hours: i64,
     lang: &str,
@@ -142,31 +179,71 @@ async fn produce(
     tx: &mpsc::UnboundedSender<Update>,
 ) -> Result<()> {
     let started = std::time::Instant::now();
+    let now = Utc::now();
+    let window = now - chrono::Duration::hours(hours);
+
+    // Posts are kept longer than the window asked for, so widening the window
+    // later is free. Load everything retained, prune on the way back out.
+    let cached = if cache {
+        store.posts(now - chrono::Duration::hours(hours.max(72)))
+    } else {
+        Vec::new()
+    };
+
+    // A briefing that covered a narrower window than this one answered a
+    // different question, so it does not spare us the work.
+    let previous = if cache { store.last_briefing() } else { None }
+        .filter(|b| b.hours >= hours && b.at >= window);
+    let since = previous.as_ref().map_or(window, |b| b.at);
 
     // Pages within a feed are chained by cursor and must be walked in order, but
     // the two feeds are independent — so they run side by side and the whole
     // fetch costs one feed's worth of time instead of two.
-    let cutoff = Utc::now() - chrono::Duration::hours(hours);
+    // Cached ids only tell paging to stop on a refresh. A run that widens the
+    // window has to walk the pages again, even though its first page is all
+    // posts we already hold — the ones it needs are behind them.
+    let known: Arc<HashSet<String>> = Arc::new(if previous.is_some() {
+        cached.iter().map(|t| t.id.clone()).collect()
+    } else {
+        HashSet::new()
+    });
     let mut tasks = Vec::new();
     for feed in feeds {
         let client = Arc::clone(&client);
+        let known = Arc::clone(&known);
         let tx = tx.clone();
         tasks.push(tokio::spawn(async move {
-            collect(&client, feed, pages, cutoff, &tx).await
+            collect(&client, feed, pages, since, &known, &tx).await
         }));
     }
 
-    let mut all = Vec::new();
+    let mut all = cached;
     for task in tasks {
         all.extend(task.await.context("fetch task panicked")??);
     }
 
     let mut seen = HashSet::new();
-    all.retain(|t: &Tweet| t.created_at >= cutoff && seen.insert(t.id.clone()));
+    all.retain(|t: &Tweet| seen.insert(t.id.clone()));
     all.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+    // Save before trimming to the window: what falls outside it today may be
+    // inside a wider one tomorrow.
+    if cache {
+        store.save_posts(&all, hours)?;
+    }
+
+    all.retain(|t| t.created_at >= window && t.created_at > since);
     all.truncate(llm::MAX_TWEETS);
 
-    if all.len() < 5 {
+    if all.len() < MIN_POSTS {
+        // Nothing new is the normal outcome of refreshing twice in a row, not
+        // a failure — leave the briefings already on screen alone.
+        if let Some(previous) = &previous {
+            let _ = tx.send(Update::Status(format!(
+                "nothing new since {}",
+                previous.at.with_timezone(&chrono::Local).format("%H:%M")
+            )));
+            return Ok(());
+        }
         anyhow::bail!(
             "only {} posts in the last {hours}h — try --hours 48 or more --pages",
             all.len()
@@ -175,9 +252,14 @@ async fn produce(
 
     let fetched = started.elapsed();
     let posts = all.len();
-    let _ = tx.send(Update::Status(format!(
-        "{posts} posts · last {hours}h · summarizing"
-    )));
+    let span = match &previous {
+        Some(b) => format!(
+            "since my last briefing, {} ago",
+            humanize(now.signed_duration_since(b.at))
+        ),
+        None => format!("covering the last {hours} hours"),
+    };
+    let _ = tx.send(Update::Status(format!("{posts} posts · {span} · summarizing")));
 
     // Most of the generation is thinking, and thinking is not streamed, so
     // nothing arrives for a long stretch. Tick the elapsed seconds meanwhile,
@@ -200,7 +282,8 @@ async fn produce(
     // guessed at. A slow start and a slow finish have different causes.
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
-    let prompt = llm::build_prompt(&all, hours, lang);
+    let mut text = String::new();
+    let prompt = llm::build_prompt(&all, &span, lang);
     let outcome = llm::stream(&prompt, model, effort, |token| {
         if let Some(handle) = ticker.take() {
             handle.abort();
@@ -208,6 +291,7 @@ async fn produce(
         if first_token.is_none() {
             first_token = Some(started.elapsed());
         }
+        text.push_str(token);
         let _ = tx.send(Update::Token(token.to_string()));
     })
     .await;
@@ -216,6 +300,15 @@ async fn produce(
         handle.abort();
     }
     outcome.context("summary failed")?;
+
+    if cache && !text.trim().is_empty() {
+        store.add_briefing(&Briefing {
+            at: now,
+            hours,
+            posts,
+            text: text.trim().to_string(),
+        })?;
+    }
 
     let wait = first_token.map_or(0.0, |t| (t - fetched).as_secs_f64());
     let _ = tx.send(Update::Status(format!(
@@ -226,12 +319,31 @@ async fn produce(
     Ok(())
 }
 
-/// Page through one feed, reporting progress as it goes.
+/// "12 minutes" / "3 hours" — enough for the prompt to say how far back to go.
+fn humanize(gap: chrono::Duration) -> String {
+    let minutes = gap.num_minutes().max(1);
+    if minutes < 90 {
+        return format!("{minutes} minute{}", plural(minutes));
+    }
+    let hours = gap.num_hours();
+    format!("{hours} hour{}", plural(hours))
+}
+
+fn plural(n: i64) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// Page through one feed until it stops bringing posts we do not already have.
 async fn collect(
     client: &Client,
     feed: Feed,
     pages: u32,
     cutoff: DateTime<Utc>,
+    known: &HashSet<String>,
     tx: &mpsc::UnboundedSender<Update>,
 ) -> Result<Vec<Tweet>> {
     let label = feed.label();
@@ -260,14 +372,19 @@ async fn collect(
         };
 
         let count = fetched.tweets.len();
-        let in_window = fetched.tweets.iter().filter(|t| t.created_at >= cutoff).count();
+        let fresh = fetched
+            .tweets
+            .iter()
+            .filter(|t| t.created_at >= cutoff && !known.contains(&t.id))
+            .count();
         out.extend(fetched.tweets);
 
-        // A whole page with nothing recent means we have paged out of the
-        // window. Following is chronological so that is exact; For You is
-        // ranked, but a page of 40 with nothing from the window is a good
-        // enough signal that digging deeper will not help either.
-        if count > 0 && in_window == 0 {
+        // A whole page with nothing we still need means we have caught up:
+        // either paged out of the window, or reached posts the last refresh
+        // already saw. Following is chronological so that is exact; For You is
+        // ranked, but a page of 40 with nothing new is a good enough signal
+        // that digging deeper will not help either.
+        if count > 0 && fresh == 0 {
             break;
         }
         // Enough on its own — the global cap will trim the rest anyway.

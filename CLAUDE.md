@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Rust
 cd cli
 cargo build --release
-cargo test                          # 20 tests, all unit tests inside src/*.rs
+cargo test                          # 25 tests, all unit tests inside src/*.rs
 cargo test cookies::                # one module
 cargo test round_trips_a_plain      # one test by name
 cargo clippy --all-targets
@@ -61,6 +61,23 @@ X rotates these. When it does, fetching fails with `HTTP 404`. To get the curren
 Do not try to scrape them with `curl`: x.com serves a shell with no script tags to non-browser clients, so there are no bundle URLs to follow. A logged-in browser session is required. (unrager solves this by scraping the ids from its authenticated login shell, if you ever want to automate it.)
 
 The `features` map in `x.rs` is a separate rotating thing. If a request returns an error naming a missing feature flag, add it there.
+
+## The cache
+
+A refresh should cost one page and one short briefing, not ten pages and a whole day again. `cli/src/store.rs` keeps two files in `~/Library/Caches/xummary`:
+
+- `posts.jsonl` — every post fetched, kept for at least 72 hours whatever `--hours` asked for, so widening the window to 48h is served from disk
+- `briefings.jsonl` — the last 50 briefings, `{at, hours, posts, text}`
+
+Three things follow from it:
+
+- **Paging stops on posts you already have.** `collect` breaks on a page with no post that is both inside the window and absent from the cache. Same heuristic as before, one cutoff later.
+- **A refresh only summarizes what arrived since the last briefing.** The cutoff is the previous briefing's `at`, so the model sees 40 new posts, not 600. Under `MIN_POSTS` new posts the run says `nothing new since HH:MM` and exits **0** without calling `claude` — that is a normal outcome, not a failure.
+- **A wider window is a new question.** A briefing stored with `hours: 24` does not satisfy a `--hours 48` run, so that one goes back to a full walk. That is why `hours` is in the record.
+
+`--no-cache` touches neither file: a full page walk over the whole window, and the cache is left as it was found. `--log` prints the stored briefings as JSON lines, oldest first — the macOS app calls it at launch instead of knowing the path.
+
+The app keeps every briefing on screen, newest at top, each under a rule with its time and post count. That is the point of the whole thing: refresh adds a block, it does not wipe what you were reading.
 
 ## Facts that will bite you
 

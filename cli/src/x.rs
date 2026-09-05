@@ -3,6 +3,7 @@
 use crate::cookies::Session;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// The bearer the x.com web app ships with. Public, and the same for everyone.
@@ -39,7 +40,7 @@ impl Feed {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tweet {
     pub id: String,
     pub handle: String,

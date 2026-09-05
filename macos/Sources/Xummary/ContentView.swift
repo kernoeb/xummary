@@ -21,7 +21,10 @@ struct ContentView: View {
                 .ignoresSafeArea()
         }
         .background(TransparentWindow())
-        .onAppear { model.run() }
+        .onAppear {
+            model.loadHistory()
+            model.run()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .refreshBriefing)) { _ in
             model.run()
         }
@@ -66,11 +69,13 @@ struct ContentView: View {
                 if let error = model.errorMessage {
                     ErrorNote(message: error, theme: theme)
                 }
-                ForEach(Markdown.blocks(model.text)) { block in
-                    BlockView(block: block, theme: theme, isFirst: block.id == 0)
-                }
-                if model.isRunning {
-                    Caret(theme: theme)
+                ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
+                    EntryView(
+                        entry: entry,
+                        theme: theme,
+                        isFirst: index == 0,
+                        showCaret: entry.isLive && model.isRunning
+                    )
                 }
             }
             .frame(maxWidth: 660, alignment: .leading)
@@ -99,6 +104,45 @@ struct ContentView: View {
         if model.isRunning { return model.status }
         guard let finished = model.finishedAt else { return model.status }
         return finished.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+/// One run's briefing, under a rule saying when it arrived.
+private struct EntryView: View {
+    let entry: Entry
+    let theme: Theme
+    let isFirst: Bool
+    let showCaret: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !isFirst {
+                Rectangle()
+                    .fill(theme.rule)
+                    .frame(height: 1)
+                    .padding(.top, 40)
+                    .padding(.bottom, 12)
+            }
+            Text(stamp)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.dim)
+                .padding(.bottom, 16)
+            ForEach(Markdown.blocks(entry.text)) { block in
+                BlockView(block: block, theme: theme, isFirst: block.id == 0)
+            }
+            if showCaret {
+                Caret(theme: theme)
+            }
+        }
+    }
+
+    private var stamp: String {
+        guard let at = entry.at else { return "now" }
+        let time = at.formatted(date: .omitted, time: .shortened)
+        let day = Calendar.current.isDateInToday(at)
+            ? time
+            : at.formatted(date: .abbreviated, time: .shortened)
+        return entry.posts > 0 ? "\(day) · \(entry.posts) posts" : day
     }
 }
 

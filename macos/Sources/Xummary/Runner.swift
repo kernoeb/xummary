@@ -1,10 +1,23 @@
 import Foundation
 
+/// One briefing on screen: everything a single run produced.
+struct Entry: Identifiable {
+    let id = UUID()
+    /// When the run finished. Nil while its text is still arriving.
+    var at: Date?
+    var posts = 0
+    var text = ""
+    var isLive = false
+}
+
 /// Runs the `xummary` CLI and collects its output: the briefing on stdout,
 /// progress on stderr.
+///
+/// Past briefings come from the CLI's own cache, so a refresh adds a block at
+/// the top instead of wiping what you were reading.
 @MainActor
 final class BriefingModel: ObservableObject {
-    @Published private(set) var text = ""
+    @Published private(set) var entries: [Entry] = []
     @Published private(set) var status = "ready"
     @Published private(set) var isRunning = false
     @Published private(set) var errorMessage: String?
@@ -13,6 +26,9 @@ final class BriefingModel: ObservableObject {
 
     private var process: Process?
     private var lastError = ""
+    /// Post count read off the progress line, for the finished block's header.
+    private var livePosts = 0
+    private var historyLoaded = false
     /// Tells a finished run apart from the one now on screen.
     private var generation = 0
     private var outBuffer = Data()
@@ -28,7 +44,8 @@ final class BriefingModel: ObservableObject {
 
         generation += 1
         let token = generation
-        text = ""
+        entries.insert(Entry(isLive: true), at: 0)
+        livePosts = 0
         lastError = ""
         errorMessage = nil
         finishedAt = nil
@@ -80,9 +97,79 @@ final class BriefingModel: ObservableObject {
         // Bumping the generation makes anything still in flight from the old run
         // arrive stale, so it cannot clobber the run that replaces it.
         generation += 1
+        entries.removeAll { $0.isLive }
         process?.terminate()
         process = nil
         isRunning = false
+    }
+
+    /// Loads what past runs wrote. Called once at launch; the block a run adds
+    /// stays in memory afterwards, so nothing is ever listed twice.
+    func loadHistory() {
+        guard let binary = Self.locateBinary() else { return }
+        let environment = Self.childEnvironment()
+        Task.detached(priority: .userInitiated) {
+            let stored = Self.readLog(binary, environment)
+            await MainActor.run { self.appendHistory(stored) }
+        }
+    }
+
+    /// History goes under whatever is already on screen, so it and the first
+    /// run can land in either order. Once only, so a run's own block is never
+    /// listed twice.
+    private func appendHistory(_ stored: [Entry]) {
+        guard !historyLoaded else { return }
+        historyLoaded = true
+        entries += stored
+    }
+
+    /// `xummary --log` prints the stored briefings as JSON lines, oldest first.
+    private nonisolated static func readLog(_ binary: URL, _ environment: [String: String]) -> [Entry] {
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = ["--log"]
+        process.environment = environment
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [] }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            guard let date = Self.timestamp(text) else {
+                throw DecodingError.dataCorruptedError(
+                    in: try decoder.singleValueContainer(),
+                    debugDescription: "not an RFC 3339 timestamp: \(text)"
+                )
+            }
+            return date
+        }
+        return data.split(separator: UInt8(ascii: "\n"))
+            .compactMap { try? decoder.decode(Stored.self, from: Data($0)) }
+            .map { Entry(at: $0.at, posts: $0.posts, text: $0.text) }
+            .reversed()
+    }
+
+    private struct Stored: Decodable {
+        let at: Date
+        let posts: Int
+        let text: String
+    }
+
+    /// chrono writes fractional seconds; ISO8601DateFormatter only reads them
+    /// when told to, and only reads whole seconds when told not to.
+    private nonisolated static func timestamp(_ text: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return withFraction.date(from: text) ?? ISO8601DateFormatter().date(from: text)
     }
 
     private static func drain(
@@ -102,9 +189,11 @@ final class BriefingModel: ObservableObject {
     }
 
     private func absorbOutput(_ chunk: Data, token: Int) {
-        guard token == generation else { return }
+        guard token == generation, let live = entries.firstIndex(where: { $0.isLive }) else {
+            return
+        }
         outBuffer.append(chunk)
-        text += Self.takeText(&outBuffer)
+        entries[live].text += Self.takeText(&outBuffer)
     }
 
     private func absorbProgress(_ chunk: Data, token: Int) {
@@ -118,8 +207,16 @@ final class BriefingModel: ObservableObject {
                     .trimmingCharacters(in: .whitespaces)
             } else {
                 status = line
+                livePosts = Self.postCount(line) ?? livePosts
             }
         }
+    }
+
+    /// Progress lines start with the post count: "48 posts · thinking · 3s".
+    private static func postCount(_ line: String) -> Int? {
+        let digits = line.prefix { $0.isNumber }
+        guard !digits.isEmpty, line.dropFirst(digits.count).hasPrefix(" posts") else { return nil }
+        return Int(digits)
     }
 
     /// Decodes the whole characters at the front of `buffer` and removes them.
@@ -162,12 +259,29 @@ final class BriefingModel: ObservableObject {
         guard token == generation else { return }
         isRunning = false
         process = nil
+        let live = entries.firstIndex { $0.isLive }
+
         if code != 0 {
             errorMessage = lastError.isEmpty ? "xummary exited with code \(code)" : lastError
             status = "failed"
-        } else {
-            finishedAt = Date()
+            if let live { entries.remove(at: live) }
+            return
         }
+
+        // A run with nothing new to say writes no text and says so in its
+        // status. Drop the empty block and leave that status in the footer,
+        // which a finish time would replace.
+        guard let live,
+              !entries[live].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            if let live { entries.remove(at: live) }
+            return
+        }
+
+        finishedAt = Date()
+        entries[live].at = Date()
+        entries[live].posts = livePosts
+        entries[live].isLive = false
     }
 
     /// Prefers the copy bundled inside the .app, then the usual install spots.

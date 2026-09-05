@@ -44,11 +44,14 @@ impl Drop for Scratch {
     }
 }
 
-pub fn build_prompt(tweets: &[Tweet], hours: i64, lang: &str) -> String {
+/// `span` says what stretch of the timeline the posts cover — the whole
+/// window on a first run, only what arrived since the last briefing on a
+/// refresh. It goes in the prompt so the model pitches the briefing right.
+pub fn build_prompt(tweets: &[Tweet], span: &str, lang: &str) -> String {
     let sample: String = tweets.iter().map(format_tweet).collect();
 
     format!(
-        "Below are {count} posts from my X timeline, covering the last {hours} hours, newest first. \
+        "Below are {count} posts from my X timeline, {span}, newest first. \
 Write my briefing in {lang}.\n\n\
 Exact format, nothing else. One section per story, where a story is one \
 event, one launch, one announcement, one controversy:\n\
@@ -262,8 +265,9 @@ mod tests {
 
     #[test]
     fn the_prompt_carries_the_count_and_the_language() {
-        let prompt = build_prompt(&[tweet("alice", "hi")], 24, "French");
+        let prompt = build_prompt(&[tweet("alice", "hi")], "covering the last 24 hours", "French");
         assert!(prompt.contains("Below are 1 posts"));
+        assert!(prompt.contains("covering the last 24 hours"));
         assert!(prompt.contains("Write my briefing in French"));
         assert!(prompt.contains("Write every word in French"));
         assert!(prompt.contains("@alice"));
