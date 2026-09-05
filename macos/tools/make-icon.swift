@@ -17,25 +17,32 @@ let bodyInset: CGFloat = 100
 let bodyRadius: CGFloat = 185
 let centre = grid / 2
 
-/// Two palettes. `paper` is the default: a printed briefing rather than
-/// another dark glassy app icon.
-let palette = ProcessInfo.processInfo.environment["ICON_PALETTE"] ?? "paper"
+/// macOS bakes one image into the .icns — an app icon cannot follow the
+/// system appearance — so the palette is a build choice. ICON_PALETTE picks it:
+///   night  dark ground, warm X   (default)
+///   paper  light ground, warm X
+///   dark   dark ground, blue X
+let palette = ProcessInfo.processInfo.environment["ICON_PALETTE"] ?? "night"
 let isPaper = palette == "paper"
+let isBlue = palette == "dark"
+
+let warm = CGColor(red: 0.898, green: 0.365, blue: 0.180, alpha: 1)  // #E55D2E
+let blue = CGColor(red: 0.478, green: 0.635, blue: 0.969, alpha: 1)  // #7AA2F7
 
 let groundTop = isPaper
     ? CGColor(red: 0.996, green: 0.984, blue: 0.965, alpha: 1)  // #FEFBF6
-    : CGColor(red: 0.106, green: 0.129, blue: 0.188, alpha: 1)  // #1B2130
+    : (isBlue ? CGColor(red: 0.106, green: 0.129, blue: 0.188, alpha: 1)
+              : CGColor(red: 0.114, green: 0.106, blue: 0.098, alpha: 1))
 let groundBottom = isPaper
     ? CGColor(red: 0.949, green: 0.925, blue: 0.882, alpha: 1)  // #F2ECE1
-    : CGColor(red: 0.047, green: 0.055, blue: 0.078, alpha: 1)  // #0C0E14
-let accent = isPaper
-    ? CGColor(red: 0.851, green: 0.294, blue: 0.153, alpha: 1)  // #D94B27
-    : CGColor(red: 0.478, green: 0.635, blue: 0.969, alpha: 1)  // #7AA2F7
+    : (isBlue ? CGColor(red: 0.047, green: 0.055, blue: 0.078, alpha: 1)
+              : CGColor(red: 0.055, green: 0.051, blue: 0.047, alpha: 1))
+let accent = isBlue ? blue : warm
 
 func paper(_ alpha: CGFloat) -> CGColor {
     isPaper
         ? CGColor(red: 0.106, green: 0.094, blue: 0.078, alpha: alpha)  // #1B1814 ink
-        : CGColor(red: 0.902, green: 0.910, blue: 0.925, alpha: alpha)  // #E6E8EC
+        : CGColor(red: 0.945, green: 0.933, blue: 0.914, alpha: alpha)  // #F1EEE9 paper
 }
 
 enum Variant: String {
