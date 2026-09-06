@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -7,6 +8,7 @@ struct ContentView: View {
     /// go now would refresh.
     @State private var pull: CGFloat = 0
     @State private var armed = false
+    @State private var dragging = false
 
     private var theme: Theme { .of(scheme) }
 
@@ -105,23 +107,31 @@ struct ContentView: View {
         }
         .scrollContentBackground(.hidden)
         .overlay(alignment: .top) {
-            PullHint(pull: pull, armed: armed, theme: theme).padding(.top, 12)
+            PullHint(pull: pull, armed: armed, dragging: dragging, theme: theme)
+                .padding(.top, 12)
         }
     }
 
-    private func pulled(_ distance: CGFloat, dragging: Bool) {
+    private func pulled(_ distance: CGFloat, isDragging: Bool) {
+        dragging = isDragging
         // Every scroll event reports, and most report nothing pulled. Writing
         // the same zero back would redraw the briefing on each one.
         guard distance != pull else { return }
         pull = distance
-        if distance >= pullTrigger, dragging, !model.isRunning { armed = true }
         if distance < 1 { armed = false }
+        guard distance >= pullTrigger, isDragging, !model.isRunning, !armed else { return }
+        armed = true
+        // A tap through the trackpad, so the threshold is felt as well as read.
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
     }
 
+    /// Fingers off the trackpad. The hint goes with them, whether it fired or not.
     private func released() {
-        guard armed else { return }
+        let fire = armed
         armed = false
-        guard !model.isRunning else { return }
+        dragging = false
+        pull = 0
+        guard fire, !model.isRunning else { return }
         model.run()
     }
 

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// How far the briefing has to come down before letting go refreshes it.
-let pullTrigger: CGFloat = 52
+let pullTrigger: CGFloat = 28
 
 /// Watches the scroll view behind the briefing: how far it has been pulled
 /// past the top, and when the trackpad is released.
@@ -128,6 +128,7 @@ struct PullToRefresh: NSViewRepresentable {
 struct PullHint: View {
     let pull: CGFloat
     let armed: Bool
+    let dragging: Bool
     let theme: Theme
 
     private var progress: Double { min(1, Double(pull / pullTrigger)) }
@@ -141,8 +142,10 @@ struct PullHint: View {
                 .font(.system(size: 11, weight: .medium))
         }
         .foregroundStyle(armed ? theme.accent : theme.dim)
-        // Visible from the first few points, so the gesture announces itself.
-        .opacity(min(1, Double(pull / 12)))
+        // Visible from the first few points, so the gesture announces itself,
+        // and gone as soon as you let go — the bounce back is not a pull.
+        .opacity(dragging ? min(1, Double(pull / 10)) : 0)
         .animation(.easeOut(duration: 0.15), value: armed)
+        .animation(.easeOut(duration: 0.2), value: dragging)
     }
 }

@@ -163,7 +163,9 @@ Summarising is judgement, not reasoning, so `low` is the default. Everything tha
 
 - **Only a drag arms it, never momentum.** After a flick the fingers are already off, so the bounce arrives with no release event behind it — and arming on it would refresh every time you threw the briefing back to the top.
 
-The hint says `pull to refresh`, then `release to refresh` once far enough. Without that the threshold is invisible and the gesture feels random. A legacy mouse wheel sends no scroll phase, so it never reports a release and cannot pull to refresh. The button and ⌘R still work.
+The hint belongs to the drag: it shows while fingers are down and goes when they lift, because the bounce back is not a pull and a hint left behind reads as a stuck refresh. It says `pull to refresh`, then `release to refresh` once far enough, with a haptic tap at the threshold.
+
+The rubber band is heavily damped, so 28 points of stretch is already a firm drag. Raising `pullTrigger` makes the gesture feel impossible long before the number looks large. Without that the threshold is invisible and the gesture feels random. A legacy mouse wheel sends no scroll phase, so it never reports a release and cannot pull to refresh. The button and ⌘R still work.
 
 **Underscores are not emphasis** (`macos/Sources/Xummary/Markdown.swift`). They are markdown emphasis in theory and part of a handle in practice: `Frederic_Molas` once paired with the trailing `_` of `@LLCoolChris_` and italicised the whole paragraph between them. Only `*` opens an italic. The app is a single executable target with nowhere to hang XCTest, so `tools/test.sh` compiles the real source against `tools/markdown-tests.swift`; add a case there when you touch the parser.
 
