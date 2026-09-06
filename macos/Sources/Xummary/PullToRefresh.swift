@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// How far the briefing has to come down before letting go refreshes it.
-let pullTrigger: CGFloat = 70
+let pullTrigger: CGFloat = 52
 
 /// Watches the scroll view behind the briefing: how far it has been pulled
 /// past the top, and when the trackpad is released.
@@ -10,7 +10,8 @@ let pullTrigger: CGFloat = 70
 /// SwiftUI's `refreshable` draws nothing on macOS, so the gesture is read from
 /// AppKit. Put this in the background of the scroll view's content.
 struct PullToRefresh: NSViewRepresentable {
-    let onPull: @MainActor (CGFloat) -> Void
+    /// The stretch past the top, and whether fingers are still on the trackpad.
+    let onPull: @MainActor (CGFloat, Bool) -> Void
     let onRelease: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -46,13 +47,16 @@ struct PullToRefresh: NSViewRepresentable {
 
     @MainActor
     final class Coordinator {
-        var onPull: @MainActor (CGFloat) -> Void
+        var onPull: @MainActor (CGFloat, Bool) -> Void
         var onRelease: @MainActor () -> Void
         private weak var scrollView: NSScrollView?
         private var bounds: NSObjectProtocol?
         private var wheel: Any?
+        /// Fingers on the trackpad. Momentum after a flick is not a pull: it
+        /// would refresh every time you threw the briefing back to the top.
+        private var dragging = false
 
-        init(onPull: @escaping @MainActor (CGFloat) -> Void,
+        init(onPull: @escaping @MainActor (CGFloat, Bool) -> Void,
              onRelease: @escaping @MainActor () -> Void) {
             self.onPull = onPull
             self.onRelease = onRelease
@@ -78,12 +82,19 @@ struct PullToRefresh: NSViewRepresentable {
                 MainActor.assumeIsolated { self?.report() }
             }
 
-            // Fingers leaving the trackpad, which is the moment to fire. A
-            // legacy mouse wheel sends no phase, so it cannot pull to refresh.
+            // The phase says where the fingers are. A legacy mouse wheel sends
+            // none of it, so it cannot pull to refresh.
             wheel = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
                 let phase = event.phase
-                if phase.contains(.ended) || phase.contains(.cancelled) {
-                    MainActor.assumeIsolated { self?.onRelease() }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if phase.contains(.began) || phase.contains(.changed) {
+                        self.dragging = true
+                    }
+                    if phase.contains(.ended) || phase.contains(.cancelled) {
+                        self.dragging = false
+                        self.onRelease()
+                    }
                 }
                 return event
             }
@@ -108,12 +119,12 @@ struct PullToRefresh: NSViewRepresentable {
                 let top = (scrollView.documentView?.bounds.height ?? 0) - clip.bounds.height
                 stretch = y - max(0, top)
             }
-            onPull(max(0, stretch))
+            onPull(max(0, stretch), dragging)
         }
     }
 }
 
-/// Shows how far you have pulled, and turns solid once letting go will refresh.
+/// Says what the pull will do, so the threshold is visible rather than guessed.
 struct PullHint: View {
     let pull: CGFloat
     let armed: Bool
@@ -122,12 +133,16 @@ struct PullHint: View {
     private var progress: Double { min(1, Double(pull / pullTrigger)) }
 
     var body: some View {
-        Image(systemName: "arrow.clockwise")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(armed ? theme.accent : theme.dim)
-            .rotationEffect(.degrees(progress * 300))
-            .scaleEffect(0.75 + progress * 0.25)
-            .opacity(progress)
-            .animation(.easeOut(duration: 0.15), value: armed)
+        HStack(spacing: 7) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 11, weight: .medium))
+                .rotationEffect(.degrees(progress * 180))
+            Text(armed ? "release to refresh" : "pull to refresh")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundStyle(armed ? theme.accent : theme.dim)
+        // Visible from the first few points, so the gesture announces itself.
+        .opacity(min(1, Double(pull / 12)))
+        .animation(.easeOut(duration: 0.15), value: armed)
     }
 }

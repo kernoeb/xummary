@@ -109,12 +109,12 @@ struct ContentView: View {
         }
     }
 
-    private func pulled(_ distance: CGFloat) {
+    private func pulled(_ distance: CGFloat, dragging: Bool) {
         // Every scroll event reports, and most report nothing pulled. Writing
         // the same zero back would redraw the briefing on each one.
         guard distance != pull else { return }
         pull = distance
-        if distance >= pullTrigger { armed = true }
+        if distance >= pullTrigger, dragging, !model.isRunning { armed = true }
         if distance < 1 { armed = false }
     }
 
