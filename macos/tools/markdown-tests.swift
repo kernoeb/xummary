@@ -78,5 +78,73 @@ check("an unmarked heading is carried", headingIs("## Astra", "Astra", .carried)
 check("a mark inside a sentence is left alone",
       plains(runs("le modele [new] arrive")).joined().contains("[new]"))
 
+// A refresh reconciles story by story, so identity has to survive a reword of
+// the body and stay unique when two stories share a heading.
+let sample = """
+## Le ZEVENT franchit les 12 millions
+
+La cagnotte grimpe.
+
+## Astra [updated]
+
+Un jour apres.
+
+## Also
+- une bricole — @a
+"""
+let told = Markdown.stories(sample)
+check("a briefing splits into its stories", told.count == 3, "\(told.count)")
+check("a story keeps its heading and mark",
+      told[1].heading == "Astra" && told[1].mark == .updated,
+      "\(told[1].heading) \(told[1].mark)")
+check("identity ignores the body", told[0].id == Markdown.stories("## Le ZEVENT franchit les 12 millions\n\nTout autre texte.")[0].id)
+check("Also is a story like any other", told[2].heading == "Also" && told[2].body.count == 1)
+check("text before the first heading is dropped", Markdown.stories("preamble\n\n## A\n\nx").count == 1)
+
+let twins = Markdown.stories("## Meme titre\n\nun\n\n## Meme titre\n\ndeux")
+check("two stories under one heading stay distinct", twins[0].id != twins[1].id,
+      "\(twins[0].id) vs \(twins[1].id)")
+
+// Streaming a briefing one character at a time must never show a story whose
+// heading is still being typed. Identity is the heading, so `La`, `La c`,
+// `La cag` would each be a story of its own and the page fills with debris.
+let briefing = """
+## La cagnotte du ZEVENT franchit les 13 millions
+
+La boutique a apporte 3,7 millions.
+
+## Astra [updated]
+
+Un jour apres son lancement.
+"""
+let wanted = Set(Markdown.stories(briefing).map(\.id))
+let before = Markdown.stories("## Le ZEVENT franchit les 12 millions\n\nHier soir.")
+
+var everShown = Set<String>()
+var widest = 0
+for length in 0...briefing.count {
+    let sofar = String(briefing.prefix(length))
+    let arriving = Markdown.stories(Markdown.finishedLines(sofar))
+    let shown = Markdown.reconcile(arriving: arriving, carried: before, final: false)
+    everShown.formUnion(shown.map(\.id))
+    widest = max(widest, shown.count)
+}
+let debris = everShown.subtracting(wanted).subtracting(before.map(\.id))
+check("a heading being typed never becomes a story", debris.isEmpty, "\(debris.sorted())")
+check("the page never grows past what is on it", widest <= wanted.count + before.count, "\(widest)")
+
+// The carried briefing stays visible until the run ends, then goes.
+let mid = Markdown.reconcile(arriving: Markdown.stories("## Astra\n\nx"), carried: before, final: false)
+check("what the run has not reached yet stays below", mid.map(\.id).contains(before[0].id))
+let done = Markdown.reconcile(arriving: Markdown.stories("## Astra\n\nx"), carried: before, final: true)
+check("a story the new briefing dropped goes at the end", done.count == 1 && done[0].heading == "Astra")
+
+// A section you are reading holds its finished text while the new one streams.
+let half = Markdown.reconcile(
+    arriving: Markdown.stories("## Le ZEVENT franchit les 12 millions\n\nCe"),
+    carried: before, final: false)
+check("a section being rewritten does not shrink first",
+      half.count == 1 && half[0].body.count == before[0].body.count, "\(half.count)")
+
 print(failures == 0 ? "\nall passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)

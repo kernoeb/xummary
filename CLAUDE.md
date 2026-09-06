@@ -145,6 +145,14 @@ Summarising is judgement, not reasoning, so `low` is the default. Everything tha
 
 **Signing** — `build.sh` signs ad-hoc, so every rebuild is a new identity to TCC and macOS re-asks for permissions. Not a bug; a Developer ID would be needed to stop it.
 
+**The app reconciles a refresh story by story** (`Markdown.reconcile`, `macos/Sources/Xummary/Runner.swift`). A briefing is a list of `Story`, not one string, and a refresh lays the arriving stories over the ones on screen so a section that has not changed never moves. Three things make it work, and each one broke first:
+
+- **A story's identity is its heading**, which is why the prompt asks for the heading to be reused word for word while a story is the same one. Measured: 8 of 10 headings matched exactly after asking, 0 of 10 before.
+- **Only parse finished lines** (`Markdown.finishedLines`). A heading still being typed is a different heading on every keystroke, so parsing the raw buffer mints a story per character and the page fills with `La`, `La c`, `La cag` — 38 phantom stories from one heading, and they accumulate because leftovers get carried forward.
+- **Snapshot what is on screen when the first line arrives, not when the run starts.** At launch the run begins before `--log` has read the stored briefing back, so a snapshot taken at run start is empty and the first section wipes the page.
+
+`tools/test.sh` covers all three by streaming a briefing one character at a time and asserting nothing but real stories is ever shown.
+
 **Underscores are not emphasis** (`macos/Sources/Xummary/Markdown.swift`). They are markdown emphasis in theory and part of a handle in practice: `Frederic_Molas` once paired with the trailing `_` of `@LLCoolChris_` and italicised the whole paragraph between them. Only `*` opens an italic. The app is a single executable target with nowhere to hang XCTest, so `tools/test.sh` compiles the real source against `tools/markdown-tests.swift`; add a case there when you touch the parser.
 
 ## Prompt design

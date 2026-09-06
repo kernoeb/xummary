@@ -79,14 +79,14 @@ struct ContentView: View {
                 if let error = model.errorMessage {
                     ErrorNote(message: error, theme: theme)
                 }
-                if !model.text.isEmpty {
+                if !model.stories.isEmpty {
                     Text(stamp)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(theme.dim)
                         .padding(.bottom, 18)
                 }
-                ForEach(Markdown.blocks(model.text)) { block in
-                    BlockView(block: block, theme: theme, isFirst: block.id == 0)
+                ForEach(Array(model.stories.enumerated()), id: \.element.id) { index, story in
+                    StoryView(story: story, theme: theme, isFirst: index == 0)
                 }
                 if model.isRunning {
                     Caret(theme: theme)
@@ -132,6 +132,30 @@ struct ContentView: View {
         if let error = model.errorMessage { return error }
         if model.isRunning || model.updatedAt == nil { return model.status }
         return model.status
+    }
+}
+
+/// One story: its heading, its badge, and its paragraphs.
+private struct StoryView: View {
+    let story: Story
+    let theme: Theme
+    let isFirst: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text(story.heading)
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                MarkBadge(mark: story.mark, theme: theme)
+            }
+            .padding(.top, isFirst ? 0 : 34)
+            .padding(.bottom, 12)
+
+            ForEach(story.body) { block in
+                BlockView(block: block, theme: theme, isFirst: true)
+            }
+        }
     }
 }
 

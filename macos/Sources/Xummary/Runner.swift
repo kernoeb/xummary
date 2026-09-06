@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// A briefing the CLI has stored.
 struct Entry {
@@ -16,7 +17,10 @@ struct Entry {
 /// is only ever one thing to read.
 @MainActor
 final class BriefingModel: ObservableObject {
-    @Published private(set) var text = ""
+    /// The briefing on screen, one entry per story. A refresh reconciles into
+    /// this list rather than replacing it, so a section that has not changed
+    /// never moves and never flickers.
+    @Published private(set) var stories: [Story] = []
     @Published private(set) var updatedAt: Date?
     @Published private(set) var posts = 0
     @Published private(set) var status = "ready"
@@ -32,6 +36,12 @@ final class BriefingModel: ObservableObject {
     /// you were reading stays up — a run with nothing new must not blank it.
     private var replaced = false
     private var historyLoaded = false
+    /// The briefing this run has produced so far, complete or not.
+    private var incoming = ""
+    /// What was on screen when the first line of the new briefing arrived.
+    /// Leftovers come from here, never from the reconciler's own output, or a
+    /// run piles up its own half-written stories.
+    private var carried: [Story] = []
     /// Whether the briefing on screen has been reported as read.
     private var markedRead = false
     private var readTimer: Timer?
@@ -52,6 +62,7 @@ final class BriefingModel: ObservableObject {
         let token = generation
         livePosts = 0
         replaced = false
+        incoming = ""
         markedRead = false
         readTimer?.invalidate()
         readTimer = nil
@@ -121,7 +132,7 @@ final class BriefingModel: ObservableObject {
         readTimer?.invalidate()
         readTimer = nil
         guard isActive else { return }
-        guard !markedRead, !isRunning, !text.isEmpty else { return }
+        guard !markedRead, !isRunning, !stories.isEmpty else { return }
         readTimer = Timer.scheduledTimer(withTimeInterval: Self.readAfter, repeats: false) {
             [weak self] _ in
             Task { @MainActor in self?.markRead() }
@@ -129,7 +140,7 @@ final class BriefingModel: ObservableObject {
     }
 
     private func markRead() {
-        guard !markedRead, !isRunning, !text.isEmpty else { return }
+        guard !markedRead, !isRunning, !stories.isEmpty else { return }
         markedRead = true
         guard let binary = Self.locateBinary() else { return }
         let environment = Self.childEnvironment()
@@ -162,7 +173,7 @@ final class BriefingModel: ObservableObject {
         guard !historyLoaded else { return }
         historyLoaded = true
         guard let stored, !replaced else { return }
-        text = stored.text
+        stories = Markdown.stories(stored.text)
         updatedAt = stored.at
         posts = stored.posts
         activeChanged(NSApplication.shared.isActive)
@@ -238,15 +249,30 @@ final class BriefingModel: ObservableObject {
         outBuffer.append(chunk)
         let text = Self.takeText(&outBuffer)
         guard !text.isEmpty else { return }
-        // The briefing you are reading is only cleared once real text arrives.
-        // Whitespace does not count: a run with nothing to say still closes its
-        // empty output with a newline, and that must not wipe the screen.
+        // Whitespace does not count as a briefing arriving: a run with nothing
+        // to say still closes its empty output with a newline, and that must not
+        // wipe the screen.
         if !replaced {
             guard text.contains(where: { !$0.isWhitespace }) else { return }
             replaced = true
-            self.text = ""
+            // Snapshot now, not when the run started: at launch the run begins
+            // before the stored briefing has been read back, so a snapshot taken
+            // then is empty and the first section wipes the page.
+            carried = stories
         }
-        self.text += text
+        incoming += text
+        apply(Markdown.stories(Markdown.finishedLines(incoming)), final: false)
+    }
+
+    private func apply(_ arriving: [Story], final: Bool) {
+        let next = Markdown.reconcile(arriving: arriving, carried: carried, final: final)
+        // Only a change in which stories show, or where, is worth animating. A
+        // section rewriting its own paragraphs should just rewrite them.
+        if next.map(\.id) == stories.map(\.id) {
+            stories = next
+        } else {
+            withAnimation(.easeInOut(duration: 0.25)) { stories = next }
+        }
     }
 
     private func absorbProgress(_ chunk: Data, token: Int) {
@@ -327,6 +353,8 @@ final class BriefingModel: ObservableObject {
             activeChanged(NSApplication.shared.isActive)
             return
         }
+        apply(Markdown.stories(incoming), final: true)
+        carried = []
         updatedAt = Date()
         posts = livePosts
         activeChanged(NSApplication.shared.isActive)

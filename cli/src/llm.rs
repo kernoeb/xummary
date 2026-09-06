@@ -138,7 +138,10 @@ Then mark two things.\n\
 - A story the list has that has since moved — a new figure, a new development, a \
 turn the list does not carry — ends with \"{updated}\".\n\
 Wording it differently is not moving. More posts saying the same thing is not \
-moving. If the list already has the substance, the heading gets nothing. Use \
+moving. If the list already has the substance, the heading gets nothing — and \
+then reuse the list's own heading for it, word for word, so I can see at a \
+glance that it is the section I already read. Only a story that is new or that \
+moved gets a heading of your own. Use \
 both marks in English whatever the language of the briefing, exactly those \
 characters, and nowhere but at the end of a heading — never in Also, never \
 inside a sentence. Most sections will carry no mark, and that is the expected \

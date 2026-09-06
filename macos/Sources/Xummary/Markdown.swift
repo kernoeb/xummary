@@ -25,6 +25,18 @@ struct Block: Identifiable {
     let kind: Kind
 }
 
+/// One story of the briefing, and the unit a refresh updates.
+///
+/// Its identity is its heading: the model reuses a heading word for word while
+/// a story is still the same one, so a refresh lands on the section already on
+/// screen instead of replacing the page.
+struct Story: Identifiable {
+    let id: String
+    var heading: String
+    var mark: Block.Mark
+    var body: [Block]
+}
+
 /// A styled run inside one line.
 enum Inline: Hashable {
     case plain(String)
@@ -64,6 +76,75 @@ enum Markdown {
             return (title.trimmingCharacters(in: .whitespaces), mark)
         }
         return (heading, .carried)
+    }
+
+    /// Splits the briefing into its stories. Anything before the first heading
+    /// is dropped: the prompt asks for none, and a stray preamble is not a story.
+    static func stories(_ raw: String) -> [Story] {
+        var out: [Story] = []
+        var heading: (String, Block.Mark)?
+        var body: [String] = []
+        var used: [String: Int] = [:]
+
+        func flush() {
+            guard let (title, mark) = heading else { return }
+            // Two stories can end up under one heading. Numbering the repeats
+            // keeps every identity unique, which ForEach needs.
+            let base = title.lowercased().split(separator: " ").joined(separator: " ")
+            let seen = used[base, default: 0]
+            used[base] = seen + 1
+            out.append(Story(
+                id: seen == 0 ? base : "\(base)#\(seen)",
+                heading: title,
+                mark: mark,
+                body: blocks(body.joined(separator: "\n"))
+            ))
+        }
+
+        for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = line.trimmingCharacters(in: .whitespaces)
+            if let title = line.dropPrefix("## ") ?? line.dropPrefix("# ") {
+                flush()
+                heading = splitMark(title)
+                body = []
+            } else if heading != nil {
+                body.append(line)
+            }
+        }
+        flush()
+        return out
+    }
+
+    /// Everything up to the last finished line. A story is identified by its
+    /// heading, and a heading still being typed is a different heading on every
+    /// keystroke — parsing one would mint a new story per character, and the
+    /// screen fills with `La`, `La c`, `La cag`.
+    static func finishedLines(_ text: String) -> String {
+        guard let end = text.lastIndex(of: "\n") else { return "" }
+        return String(text[..<end])
+    }
+
+    /// Lays the briefing arriving over the one already on screen.
+    ///
+    /// `carried` is what was on screen when the run began, and must never be
+    /// the reconciler's own previous output: feeding it back lets a run pile up
+    /// its own half-written stories. Until the run ends, a carried story the
+    /// briefing has not reached yet stays below — only then do we know it is
+    /// really gone.
+    static func reconcile(arriving: [Story], carried: [Story], final: Bool) -> [Story] {
+        var next = arriving
+        // The last story is still being written unless the run is over. If you
+        // are already reading that section, hold the finished version in its new
+        // place rather than let it shrink to one sentence and grow back.
+        if !final, let partial = arriving.last,
+           let complete = carried.first(where: { $0.id == partial.id }) {
+            next[next.count - 1] = complete
+        }
+        var seen = Set(next.map(\.id))
+        if !final {
+            next += carried.filter { seen.insert($0.id).inserted }
+        }
+        return next
     }
 
     /// Splits one line into styled runs: `**bold**`, `*italic*`, quoted phrases,
