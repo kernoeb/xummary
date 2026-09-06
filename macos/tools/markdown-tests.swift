@@ -146,5 +146,34 @@ let half = Markdown.reconcile(
 check("a section being rewritten does not shrink first",
       half.count == 1 && half[0].body.count == before[0].body.count, "\(half.count)")
 
+// A heading whose figure has moved on is the same story, so it replaces the
+// block rather than arriving beside it with the old number still showing.
+let thirteen = Markdown.stories("## Le ZEVENT franchit les 13 millions d'euros\n\nLa cagnotte monte.")
+let fifteen = Markdown.stories("## Le ZEVENT franchit les 15 millions d'euros\n\nElle monte encore.")
+let renamed = Markdown.reconcile(arriving: fifteen, carried: thirteen, final: false)
+check("a renamed heading replaces the story it came from", renamed.count == 1,
+      "\(renamed.map(\.heading))")
+// Its own last section is still being written, so the finished old text holds
+// the place until the run ends. Then the new figure takes over.
+let ended = Markdown.reconcile(arriving: fifteen, carried: thirteen, final: true)
+check("the new figure wins once the run ends",
+      ended.count == 1 && ended[0].heading.contains("15"), "\(ended.map(\.heading))")
+
+let other = Markdown.stories("## Le ZEvent critique pour ses invites polemiques\n\nUn autre sujet.")
+let both = Markdown.reconcile(arriving: other, carried: thirteen, final: false)
+check("a heading sharing a few words does not claim the story", both.count == 2,
+      "\(both.map(\.heading))")
+
+// Streaming that rename must not show the old and the new number at once.
+let renaming = "## Le ZEVENT franchit les 15 millions d'euros\n\nElle monte encore."
+var doubled = 0
+for length in 0...renaming.count {
+    let shown = Markdown.reconcile(
+        arriving: Markdown.stories(Markdown.finishedLines(String(renaming.prefix(length)))),
+        carried: thirteen, final: false)
+    if shown.count > 1 { doubled += 1 }
+}
+check("the old figure never shows next to the new one", doubled == 0, "\(doubled) frames")
+
 print(failures == 0 ? "\nall passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)

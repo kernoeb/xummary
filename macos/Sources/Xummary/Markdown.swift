@@ -137,14 +137,45 @@ enum Markdown {
         // are already reading that section, hold the finished version in its new
         // place rather than let it shrink to one sentence and grow back.
         if !final, let partial = arriving.last,
-           let complete = carried.first(where: { $0.id == partial.id }) {
+           let complete = carried.first(where: { same($0, partial) }) {
             next[next.count - 1] = complete
         }
         if !final {
             var seen = Set(next.map(\.id))
-            next += carried.filter { seen.insert($0.id).inserted }
+            next += carried.filter { story in
+                guard seen.insert(story.id).inserted else { return false }
+                // A heading rewritten because its figure moved on arrives as a
+                // story of its own. Showing both would put the same story on
+                // screen twice, once with the old number.
+                return !arriving.contains { same(story, $0) }
+            }
         }
         return next
+    }
+
+    /// A heading sharing this much of its wording with one on screen is that
+    /// story renamed. Its figures move: "les 13 millions" becomes "les 15
+    /// millions" and everything else in the line stays.
+    private static let renamedStory = 0.5
+
+    private static func same(_ a: Story, _ b: Story) -> Bool {
+        a.id == b.id || similarity(a.heading, b.heading) >= renamedStory
+    }
+
+    /// How much of two headings is the same words, ignoring case and order.
+    static func similarity(_ a: String, _ b: String) -> Double {
+        let left = a.lowercased().split(separator: " ")
+        let right = b.lowercased().split(separator: " ")
+        let longest = max(left.count, right.count)
+        guard longest > 0 else { return 1 }
+        var pool: [Substring: Int] = [:]
+        for word in left { pool[word, default: 0] += 1 }
+        var shared = 0
+        for word in right where (pool[word] ?? 0) > 0 {
+            pool[word]! -= 1
+            shared += 1
+        }
+        return Double(shared) / Double(longest)
     }
 
     /// Splits one line into styled runs: `**bold**`, `*italic*`, quoted phrases,

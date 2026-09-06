@@ -212,6 +212,12 @@ pub fn sections(text: &str) -> Vec<Section> {
 /// read is the same story told again, not one that developed.
 const SAME_STORY: f64 = 0.9;
 
+/// A heading sharing this much of its wording with one in the baseline is that
+/// story renamed, not a story of its own. Headings move when a figure in them
+/// is overtaken — "les 13 millions" became "les 15 millions" while the body
+/// said fifteen and the heading still said thirteen.
+const RENAMED_STORY: f64 = 0.5;
+
 /// Marks each story of `text` against the briefing the reader already saw: one
 /// the baseline does not have is new, one whose wording has moved on has moved.
 ///
@@ -221,23 +227,34 @@ const SAME_STORY: f64 = 0.9;
 /// sections rewritten and not one marked. It is not a judgement call — both
 /// texts are right here.
 pub fn mark_against(text: &str, baseline: &[Section]) -> String {
-    let before: HashMap<&str, &str> = baseline
-        .iter()
-        .map(|s| (s.heading.as_str(), s.body.as_str()))
-        .collect();
+    let mut taken = vec![false; baseline.len()];
+    let mut marks: HashMap<String, &str> = HashMap::new();
 
     // `sections` stops at Also, so the leftovers bin never carries a mark.
-    let marks: HashMap<String, &str> = sections(text)
-        .into_iter()
-        .map(|s| {
-            let mark = match before.get(s.heading.as_str()) {
-                None => crate::llm::NEW_MARK,
-                Some(was) if similarity(was, &s.body) < SAME_STORY => crate::llm::UPDATED_MARK,
-                Some(_) => "",
-            };
-            (s.heading, mark)
-        })
-        .collect();
+    for now in sections(text) {
+        let was = baseline
+            .iter()
+            .enumerate()
+            .find(|(i, b)| !taken[*i] && b.heading == now.heading)
+            .map(|(i, _)| i)
+            .or_else(|| renamed(&now.heading, baseline, &taken));
+        let mark = match was {
+            None => crate::llm::NEW_MARK,
+            Some(i) => {
+                taken[i] = true;
+                // A heading the model rewrote is a story that moved: it only
+                // rewrites one when the posts have overtaken what it said.
+                if baseline[i].heading != now.heading
+                    || similarity(&baseline[i].body, &now.body) < SAME_STORY
+                {
+                    crate::llm::UPDATED_MARK
+                } else {
+                    ""
+                }
+            }
+        };
+        marks.insert(now.heading, mark);
+    }
 
     let marked: Vec<String> = text
         .lines()
@@ -260,6 +277,19 @@ fn strip_marks(heading: &str) -> &str {
 }
 
 /// How much wording the two share, against the longer of them.
+/// Which baseline story a heading was rewritten from, if any is close enough.
+fn renamed(heading: &str, baseline: &[Section], taken: &[bool]) -> Option<usize> {
+    let heading = heading.to_lowercase();
+    baseline
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !taken[*i])
+        .map(|(i, b)| (i, similarity(&b.heading.to_lowercase(), &heading)))
+        .filter(|(_, score)| *score >= RENAMED_STORY)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
 fn similarity(a: &str, b: &str) -> f64 {
     let left: Vec<&str> = a.split_whitespace().collect();
     let right: Vec<&str> = b.split_whitespace().collect();
@@ -447,6 +477,31 @@ mod tests {
         let was = sections("## Zevent\n\nLa cagnotte passe 12 millions ce soir.");
         let now = "## Zevent\n\nLa cagnotte atteint 15 millions apres le don de Mastu.";
         assert!(mark_against(now, &was).contains("## Zevent [updated]"));
+    }
+
+    #[test]
+    fn a_heading_whose_figure_moved_is_the_same_story_updated() {
+        let was = sections("## Le ZEVENT franchit les 13 millions d'euros\n\nLa cagnotte monte.");
+        let now = "## Le ZEVENT franchit les 15 millions d'euros\n\nLa cagnotte monte encore.";
+        let marked = mark_against(now, &was);
+        assert!(marked.contains("les 15 millions d'euros [updated]"), "{marked}");
+    }
+
+    #[test]
+    fn a_heading_sharing_a_few_words_is_still_a_story_of_its_own() {
+        let was = sections("## Le ZEVENT franchit les 13 millions d'euros\n\nLa cagnotte monte.");
+        let now = "## Le ZEvent critique pour ses invites polemiques\n\nUn autre sujet.";
+        let marked = mark_against(now, &was);
+        assert!(marked.contains("polemiques [new]"), "{marked}");
+    }
+
+    #[test]
+    fn one_baseline_story_is_claimed_once() {
+        let was = sections("## Le ZEVENT franchit les 13 millions d'euros\n\nLa cagnotte monte.");
+        let now = "## Le ZEVENT franchit les 15 millions d'euros\n\nUn.\n\n## Le ZEVENT franchit les 16 millions d'euros\n\nDeux.";
+        let marked = mark_against(now, &was);
+        assert!(marked.contains("les 15 millions d'euros [updated]"), "{marked}");
+        assert!(marked.contains("les 16 millions d'euros [new]"), "{marked}");
     }
 
     #[test]
