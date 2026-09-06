@@ -327,7 +327,9 @@ async fn produce(
     let covered: Vec<String> = baseline.as_ref().map_or_else(Vec::new, |b| {
         store::sections(&b.text)
             .iter()
-            .map(|s| format!("{} — {}", s.heading, s.gist()))
+            // The heading on its own line: the model has to copy it back word
+            // for word, and a heading with a dash in it must not be ambiguous.
+            .map(|s| format!("{}\n      it said: {}", s.heading, s.gist()))
             .collect()
     });
     let read_at = baseline.as_ref().map(|b| clock(b.at));
@@ -354,11 +356,14 @@ async fn produce(
     outcome.context("summary failed")?;
 
     if cache && !text.trim().is_empty() {
+        // The marks are decided here, against the briefing already read, not
+        // asked of the model — see `store::mark_against`.
+        let seen = baseline.as_ref().map_or_else(Vec::new, |b| store::sections(&b.text));
         store.add_briefing(&Briefing {
             at: now,
             hours,
             posts,
-            text: text.trim().to_string(),
+            text: store::mark_against(text.trim(), &seen),
             read_at: None,
         })?;
     }

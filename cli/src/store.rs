@@ -9,6 +9,7 @@ use crate::x::Tweet;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Posts stay on disk at least this long whatever window the run asked for, so
@@ -187,11 +188,7 @@ pub fn sections(text: &str) -> Vec<Section> {
     for line in text.lines() {
         let line = line.trim();
         if let Some(heading) = line.strip_prefix("## ") {
-            let heading = heading
-                .trim_end_matches(crate::llm::NEW_MARK)
-                .trim_end_matches(crate::llm::UPDATED_MARK)
-                .trim_end()
-                .to_string();
+            let heading = strip_marks(heading).to_string();
             if heading.eq_ignore_ascii_case("also") {
                 break;
             }
@@ -209,6 +206,82 @@ pub fn sections(text: &str) -> Vec<Section> {
         }
     }
     out
+}
+
+/// A story whose wording moved less than this against the briefing already
+/// read is the same story told again, not one that developed.
+const SAME_STORY: f64 = 0.9;
+
+/// Marks each story of `text` against the briefing the reader already saw: one
+/// the baseline does not have is new, one whose wording has moved on has moved.
+///
+/// Deciding this in code rather than asking the model was the second attempt.
+/// Asking put a mark on a heading copied word for word out of the baseline;
+/// pushing back in the prompt then produced nothing at all, with six of ten
+/// sections rewritten and not one marked. It is not a judgement call — both
+/// texts are right here.
+pub fn mark_against(text: &str, baseline: &[Section]) -> String {
+    let before: HashMap<&str, &str> = baseline
+        .iter()
+        .map(|s| (s.heading.as_str(), s.body.as_str()))
+        .collect();
+
+    // `sections` stops at Also, so the leftovers bin never carries a mark.
+    let marks: HashMap<String, &str> = sections(text)
+        .into_iter()
+        .map(|s| {
+            let mark = match before.get(s.heading.as_str()) {
+                None => crate::llm::NEW_MARK,
+                Some(was) if similarity(was, &s.body) < SAME_STORY => crate::llm::UPDATED_MARK,
+                Some(_) => "",
+            };
+            (s.heading, mark)
+        })
+        .collect();
+
+    let marked: Vec<String> = text
+        .lines()
+        .map(|line| match line.trim().strip_prefix("## ") {
+            Some(raw) => {
+                let heading = strip_marks(raw);
+                format!("## {heading}{}", marks.get(heading).copied().unwrap_or(""))
+            }
+            None => line.to_string(),
+        })
+        .collect();
+    marked.join("\n").trim_end().to_string()
+}
+
+fn strip_marks(heading: &str) -> &str {
+    heading
+        .trim_end_matches(crate::llm::NEW_MARK)
+        .trim_end_matches(crate::llm::UPDATED_MARK)
+        .trim_end()
+}
+
+/// How much wording the two share, against the longer of them.
+fn similarity(a: &str, b: &str) -> f64 {
+    let left: Vec<&str> = a.split_whitespace().collect();
+    let right: Vec<&str> = b.split_whitespace().collect();
+    let longest = left.len().max(right.len());
+    if longest == 0 {
+        return 1.0;
+    }
+    let mut pool: HashMap<&str, usize> = HashMap::new();
+    for word in &left {
+        *pool.entry(word).or_default() += 1;
+    }
+    let shared = right
+        .iter()
+        .filter(|word| match pool.get_mut(*word) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                true
+            }
+            _ => false,
+        })
+        .count();
+    shared as f64 / longest as f64
 }
 
 #[cfg(test)]
@@ -358,6 +431,52 @@ mod tests {
     fn headings_skip_also_and_drop_the_new_mark() {
         let text = "## Morning story\n\nText.\n\n## Fresh one [new]\n\nText.\n\n## Moved on [updated]\n\nText.\n\n## Also\n- a leftover";
         assert_eq!(headings(text), vec!["Morning story", "Fresh one", "Moved on"]);
+    }
+
+    #[test]
+    fn a_story_the_baseline_lacks_is_marked_new() {
+        let was = sections("## Zevent\n\nLa cagnotte passe 12 millions.");
+        let now = "## Zevent\n\nLa cagnotte passe 12 millions.\n\n## Astra\n\nUn lancement.";
+        let marked = mark_against(now, &was);
+        assert!(marked.contains("## Astra [new]"), "{marked}");
+        assert!(marked.contains("## Zevent\n"), "unchanged stays bare: {marked}");
+    }
+
+    #[test]
+    fn a_story_whose_wording_moved_is_marked_updated() {
+        let was = sections("## Zevent\n\nLa cagnotte passe 12 millions ce soir.");
+        let now = "## Zevent\n\nLa cagnotte atteint 15 millions apres le don de Mastu.";
+        assert!(mark_against(now, &was).contains("## Zevent [updated]"));
+    }
+
+    #[test]
+    fn a_reworded_sentence_is_not_a_story_that_moved() {
+        let was = sections("## Zevent\n\nLa cagnotte passe 12 millions ce soir selon @a et @b.");
+        let now = "## Zevent\n\nLa cagnotte passe 12 millions ce soir, selon @a et @b.";
+        assert_eq!(mark_against(now, &was), now, "a comma is not a development");
+    }
+
+    #[test]
+    fn also_and_body_lines_are_left_alone() {
+        let was = sections("## Zevent\n\nUn texte.");
+        let now = "## Zevent\n\nTout autre chose ici.\n\n## Also\n- une bricole — @a";
+        let marked = mark_against(now, &was);
+        assert!(marked.contains("## Also\n- une bricole — @a"), "{marked}");
+        assert!(!marked.contains("Also ["), "the leftovers bin never carries a mark");
+    }
+
+    #[test]
+    fn a_mark_the_model_wrote_itself_is_replaced_not_doubled() {
+        let was = sections("## Zevent\n\nUn texte.");
+        let marked = mark_against("## Zevent [new]\n\nUn texte.", &was);
+        assert_eq!(marked, "## Zevent\n\nUn texte.");
+    }
+
+    #[test]
+    fn a_first_briefing_has_no_baseline_so_nothing_is_marked() {
+        let now = "## Zevent\n\nUn texte.\n\n## Astra\n\nUn autre.";
+        // Everything is new, and marking all of it would say nothing.
+        assert!(mark_against(now, &sections(now)).lines().all(|l| !l.contains('[')));
     }
 
     #[test]

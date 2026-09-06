@@ -112,7 +112,11 @@ Now write the briefing. Start with the first `## ` heading.",
     )
 }
 
-/// The "mark what I have not seen" block, empty on a first briefing.
+/// The "here is what I already read" block, empty on a first briefing.
+///
+/// It asks for one thing only: keep the heading of a story I have seen. The
+/// marks themselves are not asked for — `store::mark_against` decides those by
+/// comparing the two texts, which the model kept getting wrong.
 fn marking_section(previous: Previous) -> String {
     if previous.stories.is_empty() {
         return String::new();
@@ -124,28 +128,16 @@ fn marking_section(previous: Previous) -> String {
         .map(|h| format!("- {h}\n"))
         .collect();
     let at = previous.at;
-    let new = NEW_MARK.trim();
-
-    let updated = UPDATED_MARK.trim();
 
     format!(
         "At {at} I read a briefing of this same timeline. This is where each story \
 stood then:\n{list}\n\
 That list is for comparison only. Write the briefing from the posts, never from \
 the list: not its sentences, not its order, not its choice of what to leave out. \
-Then mark two things.\n\
-- A story the list does not have is new. Its heading ends with \"{new}\".\n\
-- A story the list has that has since moved — a new figure, a new development, a \
-turn the list does not carry — ends with \"{updated}\".\n\
-Wording it differently is not moving. More posts saying the same thing is not \
-moving. If the list already has the substance, the heading gets nothing — and \
-then reuse the list's own heading for it, word for word, so I can see at a \
-glance that it is the section I already read. Only a story that is new or that \
-moved gets a heading of your own. Use \
-both marks in English whatever the language of the briefing, exactly those \
-characters, and nowhere but at the end of a heading — never in Also, never \
-inside a sentence. Most sections will carry no mark, and that is the expected \
-shape.\n\n"
+One thing does carry over. Every story the list already has keeps the heading the \
+list gives it: copy the heading line word for word, never the \"it said\" line \
+under it, so I can see at a glance that it is the section I already read. Only a \
+story the list does not have gets a heading of your own.\n\n"
     )
 }
 
@@ -338,12 +330,12 @@ mod tests {
         assert!(prompt.contains("Write my briefing in French"));
         assert!(prompt.contains("Write every word in French"));
         assert!(prompt.contains("@alice"));
-        assert!(!prompt.contains("[new]"));
+        assert!(!prompt.contains("I read a briefing"));
     }
 
     #[test]
     fn a_refresh_is_told_what_the_reader_has_already_seen() {
-        let stories = vec!["Zevent — La cagnotte passe 12 millions.".to_string()];
+        let stories = vec!["Zevent\n      it said: La cagnotte passe 12 millions.".to_string()];
         let prompt = build_prompt(
             &[tweet("alice", "hi")],
             24,
@@ -354,9 +346,11 @@ mod tests {
             "French",
         );
         assert!(prompt.contains("At 00:57 I read a briefing"));
-        assert!(prompt.contains("- Zevent — La cagnotte passe 12 millions.\n"));
-        assert!(prompt.contains("[new]"));
-        assert!(prompt.contains("[updated]"));
+        assert!(prompt.contains("- Zevent\n      it said: La cagnotte passe 12 millions.\n"));
         assert!(prompt.contains("comparison only"));
+        assert!(prompt.contains("keeps the heading"));
+        // Marking is decided from the two texts, never asked of the model.
+        assert!(!prompt.contains("[new]"));
+        assert!(!prompt.contains("[updated]"));
     }
 }

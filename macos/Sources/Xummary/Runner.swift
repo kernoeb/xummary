@@ -51,6 +51,10 @@ final class BriefingModel: ObservableObject {
     private var errBuffer = Data()
 
     func run() {
+        // A run interrupted mid-stream leaves half-written stories up. Put the
+        // briefing that was there back, or the next run snapshots the debris as
+        // what you were already reading.
+        if isRunning, replaced { stories = carried }
         cancel()
 
         guard let binary = Self.locateBinary() else {
@@ -132,15 +136,18 @@ final class BriefingModel: ObservableObject {
         readTimer?.invalidate()
         readTimer = nil
         guard isActive else { return }
-        guard !markedRead, !isRunning, !stories.isEmpty else { return }
+        guard !markedRead, !isRunning, updatedAt != nil else { return }
         readTimer = Timer.scheduledTimer(withTimeInterval: Self.readAfter, repeats: false) {
             [weak self] _ in
             Task { @MainActor in self?.markRead() }
         }
     }
 
+    /// Guards on there being a briefing at all, not on it having stories: a
+    /// briefing the model wrote without headings still has to count as read, or
+    /// the baseline never advances and everything stays marked new forever.
     private func markRead() {
-        guard !markedRead, !isRunning, !stories.isEmpty else { return }
+        guard !markedRead, !isRunning, updatedAt != nil else { return }
         markedRead = true
         guard let binary = Self.locateBinary() else { return }
         let environment = Self.childEnvironment()
@@ -154,6 +161,31 @@ final class BriefingModel: ObservableObject {
             try? process.run()
             process.waitUntilExit()
         }
+    }
+
+    /// Reads the briefing back once the run is done.
+    ///
+    /// The CLI decides which stories are new or have moved when it stores the
+    /// briefing, by comparing it with the one already read — so the badges live
+    /// only in the stored copy, never in what was streamed. The text is
+    /// otherwise the same, so nothing moves: the badges just appear.
+    private func adoptMarks() {
+        guard let binary = Self.locateBinary() else { return }
+        let environment = Self.childEnvironment()
+        let token = generation
+        Task.detached(priority: .userInitiated) {
+            let stored = Self.readLog(binary, environment)
+            await MainActor.run { self.adopt(stored.first, token: token) }
+        }
+    }
+
+    private func adopt(_ stored: Entry?, token: Int) {
+        guard token == generation, !isRunning, let stored else { return }
+        let marked = Markdown.stories(stored.text)
+        // Marks are stripped out of a story's identity, so the same briefing
+        // gives the same ids. Anything else is not the briefing on screen.
+        guard !marked.isEmpty, marked.map(\.id) == stories.map(\.id) else { return }
+        stories = marked
     }
 
     /// Puts the last stored briefing on screen at launch, so the window has
@@ -342,6 +374,9 @@ final class BriefingModel: ObservableObject {
         if code != 0 {
             errorMessage = lastError.isEmpty ? "xummary exited with code \(code)" : lastError
             status = "failed"
+            // A briefing that failed part way is not a briefing, and the CLI
+            // stored nothing either. Put back the one you were reading.
+            if replaced { stories = carried }
             return
         }
         // A run with nothing new writes nothing and says so in its status. The
@@ -357,6 +392,7 @@ final class BriefingModel: ObservableObject {
         carried = []
         updatedAt = Date()
         posts = livePosts
+        adoptMarks()
         activeChanged(NSApplication.shared.isActive)
     }
 

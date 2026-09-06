@@ -140,8 +140,8 @@ enum Markdown {
            let complete = carried.first(where: { $0.id == partial.id }) {
             next[next.count - 1] = complete
         }
-        var seen = Set(next.map(\.id))
         if !final {
+            var seen = Set(next.map(\.id))
             next += carried.filter { seen.insert($0.id).inserted }
         }
         return next
