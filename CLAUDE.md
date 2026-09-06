@@ -156,6 +156,13 @@ Summarising is judgement, not reasoning, so `low` is the default. Everything tha
 
 `tools/test.sh` covers all three by streaming a briefing one character at a time and asserting nothing but real stories is ever shown.
 
+**Pull to refresh is read from AppKit** (`macos/Sources/Xummary/PullToRefresh.swift`). SwiftUI's `refreshable` compiles on macOS and draws nothing, so an invisible view in the scroll content finds the backing `NSScrollView` and watches two things: the clip view's bounds for how far the rubber band has stretched, and a local `NSEvent` monitor for the trackpad release that fires the refresh. Two details are load-bearing:
+
+- **Elasticity has to be forced to `.allowed`.** The default only bounces when the content overflows, so a short briefing — the case where you most want to refresh — has no gesture at all.
+- **The clip view is flipped**, so a pull past the top is a *negative* `bounds.origin.y`. The unflipped branch is there for safety, not because it runs.
+
+A legacy mouse wheel sends no scroll phase, so it never reports a release and cannot pull to refresh. The button and ⌘R still work.
+
 **Underscores are not emphasis** (`macos/Sources/Xummary/Markdown.swift`). They are markdown emphasis in theory and part of a handle in practice: `Frederic_Molas` once paired with the trailing `_` of `@LLCoolChris_` and italicised the whole paragraph between them. Only `*` opens an italic. The app is a single executable target with nowhere to hang XCTest, so `tools/test.sh` compiles the real source against `tools/markdown-tests.swift`; add a case there when you touch the parser.
 
 ## Prompt design

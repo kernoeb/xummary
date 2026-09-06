@@ -3,6 +3,10 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = BriefingModel()
     @Environment(\.colorScheme) private var scheme
+    /// How far the briefing has been dragged past the top, and whether letting
+    /// go now would refresh.
+    @State private var pull: CGFloat = 0
+    @State private var armed = false
 
     private var theme: Theme { .of(scheme) }
 
@@ -97,8 +101,28 @@ struct ContentView: View {
             .padding(.top, 30)
             .padding(.bottom, 60)
             .frame(maxWidth: .infinity, alignment: .center)
+            .background { PullToRefresh(onPull: pulled, onRelease: released) }
         }
         .scrollContentBackground(.hidden)
+        .overlay(alignment: .top) {
+            PullHint(pull: pull, armed: armed, theme: theme).padding(.top, 12)
+        }
+    }
+
+    private func pulled(_ distance: CGFloat) {
+        // Every scroll event reports, and most report nothing pulled. Writing
+        // the same zero back would redraw the briefing on each one.
+        guard distance != pull else { return }
+        pull = distance
+        if distance >= pullTrigger { armed = true }
+        if distance < 1 { armed = false }
+    }
+
+    private func released() {
+        guard armed else { return }
+        armed = false
+        guard !model.isRunning else { return }
+        model.run()
     }
 
     private var footer: some View {
