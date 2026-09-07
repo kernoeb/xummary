@@ -27,9 +27,9 @@ struct Block: Identifiable {
 
 /// One story of the briefing, and the unit a refresh updates.
 ///
-/// Its identity is its heading: the model reuses a heading word for word while
-/// a story is still the same one, so a refresh lands on the section already on
-/// screen instead of replacing the page.
+/// Its id starts out as its heading, then sticks: a refresh hands each arriving
+/// story the id of the block it replaces, so a heading can be rewritten without
+/// the section being torn down and rebuilt somewhere else on the page.
 struct Story: Identifiable {
     let id: String
     var heading: String
@@ -132,35 +132,49 @@ enum Markdown {
     /// briefing has not reached yet stays below — only then do we know it is
     /// really gone.
     static func reconcile(arriving: [Story], carried: [Story], final: Bool) -> [Story] {
-        var next = arriving
+        var next = inherit(arriving, from: carried)
         // The last story is still being written unless the run is over. If you
         // are already reading that section, hold the finished version in its new
         // place rather than let it shrink to one sentence and grow back.
-        if !final, let partial = arriving.last,
-           let complete = carried.first(where: { same($0, partial) }) {
+        if !final, let partial = next.last,
+           let complete = carried.first(where: { $0.id == partial.id }) {
             next[next.count - 1] = complete
         }
         if !final {
-            var seen = Set(next.map(\.id))
-            next += carried.filter { story in
-                guard seen.insert(story.id).inserted else { return false }
-                // A heading rewritten because its figure moved on arrives as a
-                // story of its own. Showing both would put the same story on
-                // screen twice, once with the old number.
-                return !arriving.contains { same(story, $0) }
-            }
+            let shown = Set(next.map(\.id))
+            next += carried.filter { !shown.contains($0.id) }
+        }
+        return next
+    }
+
+    /// Gives an arriving story the identity of the one it replaces.
+    ///
+    /// A heading is what names a story, not what it is. Keeping the id of the
+    /// block already on screen lets the heading itself be rewritten in place,
+    /// instead of the block being torn down and a new one inserted elsewhere.
+    static func inherit(_ arriving: [Story], from carried: [Story]) -> [Story] {
+        var next = arriving
+        // An unchanged heading is the story itself, so those claim their slot
+        // first. Otherwise a reworded heading could take the slot of a story
+        // still named further down the briefing.
+        var taken = Set(next.map(\.id).filter { id in carried.contains { $0.id == id } })
+        for i in next.indices where !taken.contains(next[i].id) {
+            let match = carried
+                .filter { !taken.contains($0.id) }
+                .map { ($0.id, similarity($0.heading, next[i].heading)) }
+                .filter { $0.1 >= renamedStory }
+                .max { $0.1 < $1.1 }
+            guard let id = match?.0 else { continue }
+            taken.insert(id)
+            next[i] = Story(id: id, heading: next[i].heading, mark: next[i].mark, body: next[i].body)
         }
         return next
     }
 
     /// A heading sharing this much of its wording with one on screen is that
-    /// story renamed. Its figures move: "les 13 millions" becomes "les 15
-    /// millions" and everything else in the line stays.
+    /// story renamed rather than a story of its own. "les 13 millions" becomes
+    /// "les 15 millions" and everything else in the line stays.
     private static let renamedStory = 0.5
-
-    private static func same(_ a: Story, _ b: Story) -> Bool {
-        a.id == b.id || similarity(a.heading, b.heading) >= renamedStory
-    }
 
     /// How much of two headings is the same words, ignoring case and order.
     static func similarity(_ a: String, _ b: String) -> Double {

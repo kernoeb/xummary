@@ -175,5 +175,41 @@ for length in 0...renaming.count {
 }
 check("the old figure never shows next to the new one", doubled == 0, "\(doubled) frames")
 
+// A story keeps the identity of the block it replaces, so a rewritten heading
+// changes the text in place instead of tearing the section down.
+check("a renamed story keeps the id of the block on screen",
+      ended[0].id == thirteen[0].id, "\(ended[0].id) vs \(thirteen[0].id)")
+check("a story nothing on screen matches keeps its own id",
+      Markdown.inherit(other, from: thirteen)[0].id == other[0].id)
+
+// One block on screen can only become one story, or two arriving sections
+// would draw over each other.
+let twoClaims = Markdown.inherit(
+    Markdown.stories("## Le ZEVENT franchit les 14 millions d'euros\n\nx"
+        + "\n\n## Le ZEVENT franchit les 15 millions d'euros\n\ny"),
+    from: thirteen)
+check("one block on screen is claimed once",
+      twoClaims.filter { $0.id == thirteen[0].id }.count == 1, "\(twoClaims.map(\.id))")
+
+// An unchanged heading is the story itself, so it takes its own slot before a
+// reworded one can.
+let alongside = Markdown.inherit(
+    Markdown.stories("## Le ZEVENT franchit les 13 millions d'euros\n\nx"
+        + "\n\n## Le ZEVENT franchit les 15 millions d'euros\n\ny"),
+    from: thirteen)
+check("an unchanged heading keeps its own block",
+      alongside[0].id == thirteen[0].id && alongside[1].id != thirteen[0].id,
+      "\(alongside.map(\.id))")
+
+// Badges are read back from the stored briefing when the run ends. They have to
+// land on the blocks already drawn, whatever those blocks were once called.
+let drawn = Markdown.reconcile(arriving: fifteen, carried: thirteen, final: true)
+let stored = Markdown.stories(
+    "## Le ZEVENT franchit les 15 millions d'euros [updated]\n\nElle monte encore.")
+let badged = Markdown.inherit(stored, from: drawn)
+check("a badge lands on the block already drawn",
+      badged.map(\.id) == drawn.map(\.id) && badged[0].mark == .updated,
+      "\(badged.map(\.id)) \(badged[0].mark)")
+
 print(failures == 0 ? "\nall passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)

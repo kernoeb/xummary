@@ -181,10 +181,10 @@ final class BriefingModel: ObservableObject {
 
     private func adopt(_ stored: Entry?, token: Int) {
         guard token == generation, !isRunning, let stored else { return }
-        let marked = Markdown.stories(stored.text)
-        // Marks are stripped out of a story's identity, so the same briefing
-        // gives the same ids. Anything else is not the briefing on screen.
-        guard !marked.isEmpty, marked.map(\.id) == stories.map(\.id) else { return }
+        // Marks are stripped out of a heading, so the same briefing gives back
+        // the same headings. Anything else is not the briefing on screen.
+        let marked = Markdown.inherit(Markdown.stories(stored.text), from: stories)
+        guard !marked.isEmpty, marked.map(\.heading) == stories.map(\.heading) else { return }
         stories = marked
     }
 
