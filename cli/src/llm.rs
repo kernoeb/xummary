@@ -54,7 +54,7 @@ pub const NEW_MARK: &str = " [new]";
 /// The heading suffix for a story the reader has seen that has since moved.
 pub const UPDATED_MARK: &str = " [updated]";
 
-/// The briefing the reader already has, so the next one can mark what changed.
+/// The briefing on screen, so a story still running keeps its heading.
 ///
 /// `stories` is one line per story: its heading and where it stood, which is
 /// enough to tell a story that has moved from one that has not. Deliberately
@@ -68,8 +68,8 @@ pub struct Previous<'a> {
 }
 
 /// One briefing of the whole window. Every refresh rewrites it, so there is
-/// always exactly one thing to read; `previous` is what the reader already
-/// saw, and the sections that are not in it get marked.
+/// always exactly one thing to read; `previous` is the briefing on screen, and
+/// a story it already has keeps its heading.
 pub fn build_prompt(
     tweets: &[Tweet],
     hours: i64,
@@ -112,9 +112,9 @@ Now write the briefing. Start with the first `## ` heading.",
     )
 }
 
-/// The "here is what I already read" block, empty on a first briefing.
+/// The "here is the briefing on screen" block, empty on a first briefing.
 ///
-/// It asks for one thing only: keep the heading of a story I have seen. The
+/// It asks for one thing only: keep the heading of a story already on screen. The
 /// marks themselves are not asked for — `store::mark_against` decides those by
 /// comparing the two texts, which the model kept getting wrong.
 fn marking_section(previous: Previous) -> String {
@@ -130,13 +130,13 @@ fn marking_section(previous: Previous) -> String {
     let at = previous.at;
 
     format!(
-        "At {at} I read a briefing of this same timeline. This is where each story \
-stood then:\n{list}\n\
+        "At {at} I last saw a briefing of this same timeline. This is where each \
+story stood then:\n{list}\n\
 That list is for comparison only. Write the briefing from the posts, never from \
 the list: not its sentences, not its order, not its choice of what to leave out. \
 One thing does carry over. Every story the list already has keeps the heading the \
 list gives it: copy the heading line word for word, never the \"it said\" line \
-under it, so I can see at a glance that it is the section I already read. Change a \
+under it, so I can see at a glance that it is the section I was reading. Change a \
 word of that heading only where the posts have overtaken it \u{2014} a figure that has \
 risen, a result now known \u{2014} and leave the rest of the line as it is. Only a \
 story the list does not have gets a heading of your own.\n\n"
@@ -336,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refresh_is_told_what_the_reader_has_already_seen() {
+    fn a_refresh_is_told_what_is_on_screen() {
         let stories = vec!["Zevent\n      it said: La cagnotte passe 12 millions.".to_string()];
         let prompt = build_prompt(
             &[tweet("alice", "hi")],
@@ -347,7 +347,7 @@ mod tests {
             }),
             "French",
         );
-        assert!(prompt.contains("At 00:57 I read a briefing"));
+        assert!(prompt.contains("At 00:57 I last saw a briefing"));
         assert!(prompt.contains("- Zevent\n      it said: La cagnotte passe 12 millions.\n"));
         assert!(prompt.contains("comparison only"));
         assert!(prompt.contains("keeps the heading"));

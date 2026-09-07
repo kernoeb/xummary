@@ -209,9 +209,16 @@ async fn produce(
 
     // A briefing that covered a narrower window than this one answered a
     // different question, so it does not spare us the work.
-    let previous = if cache { store.last_briefing() } else { None }
+    let latest = if cache { store.last_briefing() } else { None };
+    let previous = latest
+        .clone()
         .filter(|b| b.hours >= hours && b.at >= window);
     let since = previous.as_ref().map_or(window, |b| b.at);
+
+    // What the reader is looking at right now, whatever window it covered. Its
+    // headings are the ones the app has drawn, so those are the ones a
+    // continuing story has to keep.
+    let onscreen = latest.filter(|b| b.at >= window);
 
     // What to mark is judged against the last briefing the reader actually
     // read, not the last one written. Otherwise a refresh they never looked at
@@ -321,10 +328,10 @@ async fn produce(
     let mut first_token: Option<std::time::Duration> = None;
     let mut ticker = Some(ticker);
     let mut text = String::new();
-    // The briefing the reader has already seen: each story and where it stood.
-    // The first sentence is enough to tell a story that moved from one that
-    // did not, and short enough that there is no prose to copy.
-    let covered: Vec<String> = baseline.as_ref().map_or_else(Vec::new, |b| {
+    // The briefing on screen: each story and where it stood. The first sentence
+    // is enough to tell a story that moved from one that did not, and short
+    // enough that there is no prose to copy.
+    let covered: Vec<String> = onscreen.as_ref().map_or_else(Vec::new, |b| {
         store::sections(&b.text)
             .iter()
             // The heading on its own line: the model has to copy it back word
@@ -332,8 +339,8 @@ async fn produce(
             .map(|s| format!("{}\n      it said: {}", s.heading, s.gist()))
             .collect()
     });
-    let read_at = baseline.as_ref().map(|b| clock(b.at));
-    let seen = read_at.as_ref().map(|at| llm::Previous {
+    let shown_at = onscreen.as_ref().map(|b| clock(b.at));
+    let seen = shown_at.as_ref().map(|at| llm::Previous {
         at,
         stories: &covered,
     });
