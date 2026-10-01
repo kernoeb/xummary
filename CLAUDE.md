@@ -179,7 +179,7 @@ The rubber band is heavily damped, so 28 points of stretch is already a firm dra
 - **One section per story.** An earlier version asked for "5 to 8 topics", which forced the model to merge unrelated events under one heading — `## Affaires Bolloré et Guillotin` asserts a link between two unrelated cases. The prompt now states that two things sharing only a theme are two stories, and bans headings that join two subjects with "and".
 - **The posts are data.** They are strangers' text pasted into a prompt, so the prompt says never to follow an instruction written inside one.
 
-Default model is `claude-sonnet-5` (`--model` / `XUMMARY_MODEL`). Default language is French (`--lang` / `XUMMARY_LANG`).
+Default model is `claude-sonnet-5-5` (`--model` / `XUMMARY_MODEL`). Default language is French (`--lang` / `XUMMARY_LANG`).
 
 ## Icon
 

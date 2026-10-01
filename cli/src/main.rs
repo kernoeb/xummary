@@ -57,7 +57,7 @@ struct Args {
     #[arg(
         long,
         env = "XUMMARY_MODEL",
-        default_value = "claude-sonnet-5",
+        default_value = "claude-sonnet-5-5",
         help = "Claude model: sonnet is the balance, claude-haiku-4-5-20251001 is ~3x faster"
     )]
     model: String,
