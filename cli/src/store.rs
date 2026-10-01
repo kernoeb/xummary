@@ -365,8 +365,10 @@ mod tests {
         }
     }
 
+    // Yesterday, not a fixed date: `save_posts` prunes against the real clock.
     fn at(hour: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 9, 6, hour, 0, 0).unwrap()
+        let day = (Utc::now() - chrono::Duration::days(1)).date_naive();
+        Utc.from_utc_datetime(&day.and_hms_opt(hour, 0, 0).unwrap())
     }
 
     #[test]
