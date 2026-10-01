@@ -139,7 +139,9 @@ list gives it: copy the heading line word for word, never the \"it said\" line \
 under it, so I can see at a glance that it is the section I was reading. Change a \
 word of that heading only where the posts have overtaken it \u{2014} a figure that has \
 risen, a result now known \u{2014} and leave the rest of the line as it is. Only a \
-story the list does not have gets a heading of your own.\n\n"
+story the list does not have gets a heading of your own. A story on the list with \
+no post below has left the timeline: leave it out entirely, never write a section \
+to say it has not changed.\n\n"
     )
 }
 
