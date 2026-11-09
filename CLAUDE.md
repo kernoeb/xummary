@@ -102,6 +102,16 @@ Paging stops against the whole window, not against the last briefing: a post wri
 
 **A run with nothing new writes nothing to stdout, not even a closing newline.** The app treats any output as the new briefing arriving, so one stray byte cleared the stored briefing and left a blank pane. `print_plain` tracks whether it wrote anything, and the app ignores whitespace-only output — both, because neither should be the only guard.
 
+## Sources
+
+`cli/src/sources.rs` picks the posts behind each story after the briefing is written, the same way the marks are: in code, with no change to the prompt. They are stored as `sources` in `briefings.jsonl`. `--log` fills them in for older briefings from the posts still cached. The app makes each @handle a link and shows a `Sources` line under each story.
+
+- **A handle links to the post the sentence naming it is about.** The sentence weighs double, and the rest of the story breaks ties. When none of the account's posts shares a word with the story, the handle links to the profile instead of guessing, unless the account has only one post in the window.
+- **In `Also`, each line has its own post.** One account often fills several lines, so each source carries the `line` that named it, and the app links each line to its own post.
+- **Every story gets an entry, even with no posts.** Two stories can share a heading, and the app hands the entries out in order.
+- **Posts nobody named have to earn their place.** They need 3 rare words in common with the story, making up 8% of the post's own words. Half the timeline is English, so French grammar words stay "rare" by frequency alone, and a short stop list (`COMMON`) removes them. Without both rules, `pour`, `avec` and `selon` tied every long French post to every story.
+- **A quote of oneself scores on its own words.** Otherwise `Update: <link>` quoting the original outscores it.
+
 ## Facts that will bite you
 
 **`claude` invocation** (`cli/src/llm.rs`) — the flags are load-bearing:

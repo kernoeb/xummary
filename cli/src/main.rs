@@ -6,6 +6,7 @@
 
 mod cookies;
 mod llm;
+mod sources;
 mod store;
 mod ui;
 mod x;
@@ -154,7 +155,26 @@ async fn run() -> Result<()> {
 /// `--log`: the stored briefings as JSON lines, oldest first. The app reads
 /// this instead of knowing where the cache lives.
 fn print_log(store: &Store) -> Result<()> {
-    for briefing in store.briefings() {
+    let briefings = store.briefings();
+    // A briefing written before sources existed gets them from the posts still
+    // cached, newest first and capped like the posts the model was given.
+    let oldest = briefings
+        .iter()
+        .filter(|b| b.sources.is_empty())
+        .map(|b| b.at - chrono::Duration::hours(b.hours))
+        .min();
+    let cached = oldest.map_or_else(Vec::new, |cutoff| store.posts(cutoff));
+    for mut briefing in briefings {
+        if briefing.sources.is_empty() {
+            let from = briefing.at - chrono::Duration::hours(briefing.hours);
+            let posts: Vec<Tweet> = cached
+                .iter()
+                .filter(|c| c.tweet.created_at >= from && c.seen_at <= briefing.at)
+                .take(llm::MAX_TWEETS)
+                .map(|c| c.tweet.clone())
+                .collect();
+            briefing.sources = sources::attribute(&briefing.text, &posts);
+        }
         println!("{}", serde_json::to_string(&briefing)?);
     }
     Ok(())
@@ -372,6 +392,7 @@ async fn produce(
             posts,
             text: store::mark_against(text.trim(), &seen),
             read_at: None,
+            sources: sources::attribute(text.trim(), &all),
         })?;
     }
 

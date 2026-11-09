@@ -187,9 +187,76 @@ private struct StoryView: View {
             .padding(.bottom, 12)
 
             ForEach(story.body) { block in
-                BlockView(block: block, theme: theme, isFirst: true)
+                BlockView(block: block, theme: theme, isFirst: true) { story.link($0, line: block.id) }
+            }
+            // Also is one line per story, each already ending with its handle.
+            if !story.sources.isEmpty, story.heading.lowercased() != "also" {
+                SourcesView(sources: story.sources, theme: theme)
             }
         }
+    }
+}
+
+/// The posts a story came from. Hover one to read how it starts.
+private struct SourcesView: View {
+    let sources: [Source]
+    let theme: Theme
+
+    var body: some View {
+        Flow(spacing: 10, lineSpacing: 4) {
+            Text("Sources")
+                .foregroundStyle(theme.dim)
+            ForEach(sources, id: \.id) { source in
+                if let url = source.url {
+                    Link("@\(source.handle)", destination: url)
+                        .foregroundStyle(theme.accent)
+                        .help(source.snippet)
+                        .modifier(PointingHand())
+                }
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .padding(.top, 2)
+    }
+}
+
+/// Lays its children out in a row and wraps them onto the next line.
+private struct Flow: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let frames = place(subviews, width: proposal.width ?? .infinity)
+        let width = frames.map(\.maxX).max() ?? 0
+        let height = frames.map(\.maxY).max() ?? 0
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let frames = place(subviews, width: bounds.width)
+        for (view, frame) in zip(subviews, frames) {
+            view.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                       proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func place(_ subviews: Subviews, width: CGFloat) -> [CGRect] {
+        var frames: [CGRect] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var line: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += line + lineSpacing
+                line = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            line = max(line, size.height)
+        }
+        return frames
     }
 }
 
@@ -197,6 +264,7 @@ private struct BlockView: View {
     let block: Block
     let theme: Theme
     let isFirst: Bool
+    var link: (String) -> URL? = { _ in nil }
 
     var body: some View {
         switch block.kind {
@@ -211,10 +279,7 @@ private struct BlockView: View {
             .padding(.bottom, 12)
 
         case .paragraph(let runs):
-            styled(runs)
-                .font(.system(size: 15))
-                .foregroundStyle(theme.text)
-                .lineSpacing(7)
+            LinkedText(text: styled(runs, size: 15, lineSpacing: 7))
                 .padding(.bottom, 10)
 
         case .bullet(let runs):
@@ -223,17 +288,116 @@ private struct BlockView: View {
                     .fill(theme.accent.opacity(0.55))
                     .frame(width: 4, height: 4)
                     .offset(y: -3)
-                styled(runs)
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.text)
-                    .lineSpacing(5)
+                LinkedText(text: styled(runs, size: 14, lineSpacing: 5))
+                    // An AppKit view gives SwiftUI no baseline, and the dot would
+                    // sit above the first line instead of beside it.
+                    .alignmentGuide(.firstTextBaseline) { _ in Self.bulletBaseline }
             }
             .padding(.bottom, 9)
         }
     }
 
-    private func styled(_ runs: [Inline]) -> Text {
-        runs.reduce(Text(verbatim: "")) { $0 + $1.text(theme) }
+    private nonisolated static let bulletBaseline =
+        NSLayoutManager().defaultBaselineOffset(for: .systemFont(ofSize: 14))
+
+    private func styled(_ runs: [Inline], size: CGFloat, lineSpacing: CGFloat) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = lineSpacing
+        let text = NSMutableAttributedString()
+        for run in runs {
+            text.append(run.attributed(theme, size: size, link: link))
+        }
+        let whole = NSRange(location: 0, length: text.length)
+        text.addAttribute(.paragraphStyle, value: paragraph, range: whole)
+        // Each run sets only what differs, so fill in the rest underneath it.
+        text.enumerateAttributes(in: whole) { attributes, range, _ in
+            if attributes[.font] == nil {
+                text.addAttribute(.font, value: NSFont.systemFont(ofSize: size), range: range)
+            }
+            if attributes[.foregroundColor] == nil {
+                text.addAttribute(.foregroundColor, value: NSColor(theme.text), range: range)
+            }
+        }
+        return text
+    }
+}
+
+/// A paragraph drawn by AppKit. SwiftUI's `Text` opens a link but never shows
+/// the hand cursor over it; an `NSTextView` does.
+private struct LinkedText: NSViewRepresentable {
+    let text: NSAttributedString
+
+    func makeNSView(context: Context) -> NSTextView {
+        // TextKit 1 on both sides, so the measured height is the drawn height.
+        let view = NSTextView(usingTextLayoutManager: false)
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        // SwiftUI owns the frame. A text view left to resize itself grows past
+        // it, and the paragraph lands on top of the next story.
+        view.isVerticallyResizable = false
+        view.isHorizontallyResizable = false
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.heightTracksTextView = true
+        // Keep each link's own colour, without the default blue underline.
+        view.linkTextAttributes = [.cursor: NSCursor.pointingHand]
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        guard let storage = view.textStorage, !storage.isEqual(to: text) else { return }
+        storage.setAttributedString(text)
+    }
+
+    func makeCoordinator() -> Measured { Measured() }
+
+    /// The last height measured. Streaming redraws every paragraph on each
+    /// chunk, and a full text layout per paragraph each time stalls the window.
+    final class Measured {
+        var text = NSAttributedString()
+        var width: CGFloat = -1
+        var height: CGFloat = 0
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
+        let last = context.coordinator
+        if last.width == width, last.text.isEqual(to: text) {
+            return CGSize(width: width, height: last.height)
+        }
+        let storage = NSTextStorage(attributedString: text)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        let layout = NSLayoutManager()
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        layout.ensureLayout(for: container)
+        last.text = text
+        last.width = width
+        last.height = ceil(layout.usedRect(for: container).height)
+        return CGSize(width: width, height: last.height)
+    }
+}
+
+/// The hand cursor over a link. A link removed while under the pointer never
+/// hears it leave, so it pops on disappear too, or the hand stays on the stack.
+private struct PointingHand: ViewModifier {
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                guard inside != pushed else { return }
+                pushed = inside
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .onDisappear {
+                guard pushed else { return }
+                pushed = false
+                NSCursor.pop()
+            }
     }
 }
 
@@ -243,19 +407,27 @@ private struct MarkBadge: View {
     let mark: Block.Mark
     let theme: Theme
 
+    /// Half the cap height of the 21 pt heading the badge sits beside.
+    private nonisolated static let capMiddle: CGFloat = NSFont.systemFont(ofSize: 21, weight: .semibold).capHeight / 2
+
     var body: some View {
-        switch mark {
-        case .carried:
-            EmptyView()
-        case .new:
-            label("NEW")
-                .foregroundStyle(theme.background)
-                .background(theme.accent, in: shape)
-        case .updated:
-            label("UPDATED")
-                .foregroundStyle(theme.accent)
-                .overlay(shape.strokeBorder(theme.accent.opacity(0.55), lineWidth: 1))
+        Group {
+            switch mark {
+            case .carried:
+                EmptyView()
+            case .new:
+                label("NEW")
+                    .foregroundStyle(theme.background)
+                    .background(theme.accent, in: shape)
+            case .updated:
+                label("UPDATED")
+                    .foregroundStyle(theme.accent)
+                    .overlay(shape.strokeBorder(theme.accent.opacity(0.55), lineWidth: 1))
+            }
         }
+        // Sharing the heading's baseline leaves the small badge sitting low.
+        // Centre it on the capitals instead, still on the first line.
+        .alignmentGuide(.firstTextBaseline) { $0.height / 2 + Self.capMiddle }
     }
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 3) }

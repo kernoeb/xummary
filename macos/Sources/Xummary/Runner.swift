@@ -7,6 +7,8 @@ struct Entry {
     var at: Date
     var posts = 0
     var text = ""
+    /// The posts behind each story, in the order of the briefing.
+    var sources: [Sourced] = []
 }
 
 /// Runs the `xummary` CLI and collects its output: the briefing on stdout,
@@ -163,12 +165,9 @@ final class BriefingModel: ObservableObject {
         }
     }
 
-    /// Reads the briefing back once the run is done.
-    ///
-    /// The CLI decides which stories are new or have moved when it stores the
-    /// briefing, by comparing it with the one already read — so the badges live
-    /// only in the stored copy, never in what was streamed. The text is
-    /// otherwise the same, so nothing moves: the badges just appear.
+    /// Reads the briefing back once the run is done. The CLI decides the badges
+    /// and the sources when it stores it, so they exist only in the stored copy.
+    /// The text is otherwise the same, so nothing moves: they just appear.
     private func adoptMarks() {
         guard let binary = Self.locateBinary() else { return }
         let environment = Self.childEnvironment()
@@ -185,7 +184,7 @@ final class BriefingModel: ObservableObject {
         // the same headings. Anything else is not the briefing on screen.
         let marked = Markdown.inherit(Markdown.stories(stored.text), from: stories)
         guard !marked.isEmpty, marked.map(\.heading) == stories.map(\.heading) else { return }
-        stories = marked
+        stories = Markdown.attach(stored.sources, to: marked)
     }
 
     /// Puts the last stored briefing on screen at launch, so the window has
@@ -205,7 +204,7 @@ final class BriefingModel: ObservableObject {
         guard !historyLoaded else { return }
         historyLoaded = true
         guard let stored, !replaced else { return }
-        stories = Markdown.stories(stored.text)
+        stories = Markdown.attach(stored.sources, to: Markdown.stories(stored.text))
         updatedAt = stored.at
         posts = stored.posts
         activeChanged(NSApplication.shared.isActive)
@@ -242,7 +241,7 @@ final class BriefingModel: ObservableObject {
         }
         return data.split(separator: UInt8(ascii: "\n"))
             .compactMap { try? decoder.decode(Stored.self, from: Data($0)) }
-            .map { Entry(at: $0.at, posts: $0.posts, text: $0.text) }
+            .map { Entry(at: $0.at, posts: $0.posts, text: $0.text, sources: $0.sources) }
             .reversed()
     }
 
@@ -250,6 +249,18 @@ final class BriefingModel: ObservableObject {
         let at: Date
         let posts: Int
         let text: String
+        let sources: [Sourced]
+
+        private enum CodingKeys: String, CodingKey { case at, posts, text, sources }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            at = try container.decode(Date.self, forKey: .at)
+            posts = try container.decode(Int.self, forKey: .posts)
+            text = try container.decode(String.self, forKey: .text)
+            // Links are extra: sources this app cannot read must not cost it the briefing.
+            sources = (try? container.decodeIfPresent([Sourced].self, forKey: .sources)) ?? []
+        }
     }
 
     /// chrono writes fractional seconds; ISO8601DateFormatter only reads them

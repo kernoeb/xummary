@@ -53,6 +53,9 @@ pub struct Briefing {
     /// been seen rather than until the text is replaced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_at: Option<DateTime<Utc>>,
+    /// The posts behind each story, for the app to link to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<crate::sources::Sourced>,
 }
 
 pub struct Store {
@@ -269,7 +272,7 @@ pub fn mark_against(text: &str, baseline: &[Section]) -> String {
     marked.join("\n").trim_end().to_string()
 }
 
-fn strip_marks(heading: &str) -> &str {
+pub(crate) fn strip_marks(heading: &str) -> &str {
     heading
         .trim_end_matches(crate::llm::NEW_MARK)
         .trim_end_matches(crate::llm::UPDATED_MARK)
@@ -362,6 +365,7 @@ mod tests {
             posts: 100,
             text: text.into(),
             read_at: None,
+            sources: Vec::new(),
         }
     }
 

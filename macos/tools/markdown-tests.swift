@@ -211,5 +211,55 @@ check("a badge lands on the block already drawn",
       badged.map(\.id) == drawn.map(\.id) && badged[0].mark == .updated,
       "\(badged.map(\.id)) \(badged[0].mark)")
 
+// A handle links to the post the CLI found for it, by the name the story uses,
+// which can be a retweeter rather than the author. Anything else is the profile.
+let rt = Source(handle: "nasa", id: "9", snippet: "Artemis", named: "carol")
+var sourced = Markdown.attach(
+    [Sourced(heading: "Artemis", posts: [rt])],
+    to: Markdown.stories("## Artemis\n\nRelayé par @Carol et @bob."))
+check("a named handle links to its post",
+      sourced[0].link("@Carol", line: 0)?.absoluteString == "https://x.com/nasa/status/9",
+      "\(String(describing: sourced[0].link("@Carol", line: 0)))")
+check("a handle with no post links to the profile",
+      sourced[0].link("@bob", line: 0)?.absoluteString == "https://x.com/bob",
+      "\(String(describing: sourced[0].link("@bob", line: 0)))")
+
+// Also names one account on several lines, each about another post of theirs.
+let omar = Source(handle: "afpfr", id: "1", snippet: "Omar Sy", named: "afpfr", line: 0)
+let rhum = Source(handle: "afpfr", id: "2", snippet: "Rhum", named: "afpfr", line: 2)
+let also = Markdown.attach(
+    [Sourced(heading: "Also", posts: [omar, rhum])],
+    to: Markdown.stories("## Also\n- Omar Sy @afpfr\n- Eisenkot @afpfr\n- Rhum @afpfr"))
+check("each Also line links to its own post",
+      also[0].link("@afpfr", line: 2)?.absoluteString == "https://x.com/afpfr/status/2",
+      "\(String(describing: also[0].link("@afpfr", line: 2)))")
+check("an Also line with no post links to the profile",
+      also[0].link("@afpfr", line: 1)?.absoluteString == "https://x.com/afpfr",
+      "\(String(describing: also[0].link("@afpfr", line: 1)))")
+
+// Two stories can share a heading. Each gets its own entry, not the first one twice.
+let twice = Markdown.attach(
+    [Sourced(heading: "Grève", posts: []), Sourced(heading: "Grève", posts: [rt])],
+    to: Markdown.stories("## Grève\n\nUne\n## Grève\n\nDeux"))
+check("two stories under one heading keep their own sources",
+      twice[0].sources.isEmpty && twice[1].sources == [rt], "\(twice.map(\.sources))")
+
+// A renamed heading keeps its block, and must keep its sources with it.
+sourced = Markdown.inherit(
+    Markdown.attach(
+        [Sourced(heading: "Artemis décolle", posts: [rt])],
+        to: Markdown.stories("## Artemis décolle\n\nx")),
+    from: sourced)
+check("sources survive a heading being renamed", sourced[0].sources == [rt], "\(sourced[0].sources)")
+
+// A story streaming in has no sources of its own yet. It keeps the ones on
+// screen, or the sources line disappears for the whole run.
+let streaming = Markdown.reconcile(
+    arriving: Markdown.stories("## Artemis décolle\n\nEncore en cours"), carried: sourced, final: false)
+check("sources stay up while a story streams in", streaming[0].sources == [rt], "\(streaming[0].sources)")
+
+let email = runs("Écrire à contact@example.com ou à @Élodie, pas à @bob.")
+check("an email address and a non-ASCII name are not handles", handles(email) == ["@bob"], "\(handles(email))")
+
 print(failures == 0 ? "\nall passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A line of the briefing, once its shape is known.
@@ -35,6 +36,40 @@ struct Story: Identifiable {
     var heading: String
     var mark: Block.Mark
     var body: [Block]
+    /// The posts behind the story. The CLI picks them when it stores the
+    /// briefing, so a story still streaming in has none yet.
+    var sources: [Source] = []
+
+    /// Where an @handle on the given line of the story leads: the post it was
+    /// named for when the CLI found one, else the profile. Only `Also` has a
+    /// post per line, so one handle there can lead to a different post per line.
+    func link(_ handle: String, line: Int) -> URL? {
+        let name = handle.drop { $0 == "@" }.lowercased()
+        let named = sources.filter { $0.named == name }
+        if let source = named.first(where: { $0.line == line }) ?? named.first(where: { $0.line == nil }) {
+            return source.url
+        }
+        return URL(string: "https://x.com/\(name)")
+    }
+}
+
+/// A post a story came from.
+struct Source: Hashable, Decodable {
+    let handle: String
+    let id: String
+    let snippet: String
+    /// The handle the story names it by, when it does. Can be a retweeter.
+    let named: String?
+    /// For `Also` only: the line under the heading that names it, from 0.
+    var line: Int? = nil
+
+    var url: URL? { URL(string: "https://x.com/\(handle)/status/\(id)") }
+}
+
+/// The posts the CLI found for one story, in the order of the briefing.
+struct Sourced: Decodable {
+    let heading: String
+    let posts: [Source]
 }
 
 /// A styled run inside one line.
@@ -166,9 +201,29 @@ enum Markdown {
                 .max { $0.1 < $1.1 }
             guard let id = match?.0 else { continue }
             taken.insert(id)
-            next[i] = Story(id: id, heading: next[i].heading, mark: next[i].mark, body: next[i].body)
+            next[i] = Story(
+                id: id, heading: next[i].heading, mark: next[i].mark,
+                body: next[i].body, sources: next[i].sources
+            )
+        }
+        // Sources arrive only once the run ends. Until then a story keeps the
+        // ones of the block it replaces, or the line blinks out and back.
+        for i in next.indices where next[i].sources.isEmpty {
+            next[i].sources = carried.first { $0.id == next[i].id }?.sources ?? []
         }
         return next
+    }
+
+    /// Hands each story the posts the CLI found for its heading. Two stories can
+    /// share a heading, so each entry is used once, in the order of the briefing.
+    static func attach(_ sources: [Sourced], to stories: [Story]) -> [Story] {
+        var left = sources
+        return stories.map { story in
+            var story = story
+            let match = left.firstIndex { $0.heading == story.heading }
+            story.sources = match.map { left.remove(at: $0).posts } ?? []
+            return story
+        }
     }
 
     /// A heading sharing this much of its wording with one on screen is that
@@ -238,7 +293,9 @@ enum Markdown {
                 continue
             }
 
-            if c == "@", let end = handleEnd(chars, from: i) {
+            // An @ inside a word is an email address, not a handle.
+            let inWord = i > 0 && (chars[i - 1].isLetter || chars[i - 1].isNumber)
+            if c == "@", !inWord, let end = handleEnd(chars, from: i) {
                 flush()
                 runs.append(.handle(String(chars[i..<end])))
                 i = end
@@ -274,10 +331,10 @@ enum Markdown {
         return nil
     }
 
-    /// X handles are 1 to 15 characters of letters, digits and underscores.
+    /// X handles are 1 to 15 ASCII letters, digits and underscores.
     private static func handleEnd(_ chars: [Character], from start: Int) -> Int? {
         var i = start + 1
-        while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
+        while i < chars.count, chars[i].isASCII, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
             i += 1
         }
         let length = i - start - 1
@@ -286,17 +343,29 @@ enum Markdown {
 }
 
 extension Inline {
-    /// A styled `Text` run. Concatenating these keeps normal text flow and wrapping.
-    func text(_ theme: Theme) -> Text {
+    /// A styled run, in AppKit's terms: the paragraph is drawn by an
+    /// `NSTextView`, the only way a link gets the hand cursor.
+    func attributed(_ theme: Theme, size: CGFloat, link: (String) -> URL?) -> NSAttributedString {
+        let regular = NSFont.systemFont(ofSize: size)
         switch self {
         case .plain(let s):
-            return Text(s)
+            return NSAttributedString(string: s)
         case .bold(let s):
-            return Text(s).fontWeight(.semibold)
+            return NSAttributedString(string: s, attributes: [
+                .font: NSFont.systemFont(ofSize: size, weight: .semibold),
+            ])
         case .italic(let s):
-            return Text(s).italic().foregroundColor(theme.dim)
+            return NSAttributedString(string: s, attributes: [
+                .font: NSFontManager.shared.convert(regular, toHaveTrait: .italicFontMask),
+                .foregroundColor: NSColor(theme.dim),
+            ])
         case .handle(let s):
-            return Text(s).fontWeight(.medium).foregroundColor(theme.accent)
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: size, weight: .medium),
+                .foregroundColor: NSColor(theme.accent),
+            ]
+            attributes[.link] = link(s)
+            return NSAttributedString(string: s, attributes: attributes)
         }
     }
 }
