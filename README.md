@@ -39,6 +39,24 @@ Computer pour les abonnés Pro et Max.
 
 ## Install
 
+### Download
+
+You need an Apple silicon Mac, the [`claude` CLI](https://claude.com/claude-code) already logged in, and a Chromium-family browser logged into x.com.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kernoeb/xummary/main/install.sh | sh
+```
+
+This installs the app in `/Applications` and the CLI in `~/.local/bin`, after checking both against the release checksums. Run it again to update. For the CLI only, end the command with `sh -s -- --cli-only`.
+
+The app is not signed with a paid Apple Developer ID, so macOS blocks a copy downloaded in a browser. The install script avoids this, because `curl` does not mark files as downloaded. If you downloaded the [release](https://github.com/kernoeb/xummary/releases) files by hand, clear that mark once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Xummary.app ~/.local/bin/xummary
+```
+
+### Build from source
+
 You need [Rust](https://rustup.rs), the [`claude`
 CLI](https://claude.com/claude-code) already logged in, and a Chromium-family
 browser logged into x.com.

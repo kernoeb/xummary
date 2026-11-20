@@ -5,6 +5,9 @@ cd "$(dirname "$0")"
 
 APP="Xummary.app"
 CLI="${XUMMARY_BIN:-$HOME/.local/bin/xummary}"
+VERSION="${XUMMARY_VERSION:-0.1.0}"
+# "-" signs ad hoc. Releases pass a certificate, see scripts/make-signing-cert.sh.
+SIGN="${XUMMARY_SIGN_IDENTITY:--}"
 
 swift build -c release
 
@@ -19,12 +22,14 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
 if [ -x "$CLI" ]; then
     cp "$CLI" "$APP/Contents/Resources/xummary"
+    codesign --force --sign "$SIGN" --identifier com.kernoeb.xummary.cli --timestamp=none \
+        "$APP/Contents/Resources/xummary"
     echo "embedded CLI from $CLI"
 else
     echo "warning: no xummary CLI at $CLI — the app will look in ~/.local/bin at runtime" >&2
 fi
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -35,7 +40,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Xummary</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
@@ -44,9 +49,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc signature: enough to run locally, not enough to hand to anyone else.
-if ! codesign --force --sign - "$APP"; then
-    echo "warning: ad-hoc signing failed — macOS may refuse to launch the app" >&2
+# Without a Developer ID, Gatekeeper blocks a downloaded copy whatever the identity.
+if ! codesign --force --sign "$SIGN" --timestamp=none "$APP"; then
+    echo "warning: signing failed — macOS may refuse to launch the app" >&2
 fi
 
 echo "built $PWD/$APP"
