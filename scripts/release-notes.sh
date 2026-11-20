@@ -18,7 +18,7 @@ fi
 section() {
     local title="$1" type="$2" lines
     lines="$(git log --no-merges --format='%h %s' "$range" \
-        | perl -ne 'if (/^(\w+) '"$type"'(?:\([^)]*\))?!?: (.*)$/) { print "- \u$2 ($1)\n" }')"
+        | perl -ne 'if (/^(\w+) '"$type"'(?:\([^)]*\))?!?: (.*)$/) { ($s, $h) = ($2, $1); $s =~ s{(?<![`\w])@(\w+)}{`\@$1`}g; print "- \u$s ($h)\n" }')"
     if [ -n "$lines" ]; then
         printf '### %s\n\n%s\n\n' "$title" "$lines"
     fi
