@@ -28,10 +28,29 @@ ICON_PALETTE=paper ./build.sh       # night (default) | paper | dark
 XUMMARY_BIN=/path/to/xummary ./build.sh
 ./tools/test.sh                     # inline markdown parser checks
 
-# install — always remove first, see below
+# install the latest release (what is installed on this Mac now)
+curl -fsSL https://raw.githubusercontent.com/kernoeb/xummary/main/install.sh | sh
+
+# install a local build — always remove first, see below. This replaces the release
+# identity with an ad hoc one, so the Keychain asks again; install.sh puts it back.
 rm -f ~/.local/bin/xummary && cp cli/target/release/xummary ~/.local/bin/
 rm -rf /Applications/Xummary.app && cp -R macos/Xummary.app /Applications/
 ```
+
+## Releases
+
+A `v*` tag runs `.github/workflows/release.yml` on a `macos-26` runner: Rust and Swift tests, then the CLI and the app, signed with the release certificate, attached to the GitHub release.
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+gh run watch "$(gh run list --workflow release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+- **The version comes from the tag.** The workflow writes it into `cli/Cargo.toml` and `build.sh` (`XUMMARY_VERSION`) at build time. The repo keeps `0.1.0`; do not bump it by hand.
+- **The asset names carry no version**: `Xummary-macos-arm64.zip`, `xummary-cli-macos-arm64.tar.gz`, `SHA256SUMS`. `install.sh` fetches `releases/latest/download/<name>`, so renaming one breaks every install command already in someone's history.
+- **Apple silicon only.** The runner is arm64. An Intel build needs a second Rust target, `lipo`, and a universal Swift build, which puts the binary somewhere else than `build.sh` expects.
+- **The certificate is not in the repo.** It lives in `~/.config/xummary/signing/` on the maintainer's Mac, and in the `XUMMARY_CERT_P12_BASE64` and `XUMMARY_CERT_PASSWORD` secrets. Without them the workflow still releases, signed ad hoc, with a warning in the run summary.
+- **A manual run** (`workflow_dispatch`) builds and keeps the files as a workflow artifact. Only a tag publishes.
 
 **Fast check that fetching still works, without spending tokens on a summary:**
 
@@ -159,7 +178,7 @@ Summarising is judgement, not reasoning, so `low` is the default. Everything tha
 
 **Overwriting a binary in place kills it.** On arm64 macOS, `cp` onto an existing signed binary invalidates its signature and the kernel SIGKILLs it at launch — exit `137`, no output, no error message, which reads exactly like a crash on startup. Always `rm -f` the destination first. This applies to `~/.local/bin/xummary` and to `/Applications/Xummary.app`.
 
-**Signing** — `build.sh` signs ad hoc by default, so every local rebuild is a new identity to TCC and the Keychain, and macOS asks again for permissions. Releases sign with one self-signed certificate (`XUMMARY_SIGN_IDENTITY`, made once by `scripts/make-signing-cert.sh`, stored as the `XUMMARY_CERT_P12_BASE64` and `XUMMARY_CERT_PASSWORD` secrets). Its designated requirement is `identifier and certificate leaf`, not the binary hash, so a "Always Allow" on the browser's Safe Storage key survives updates. The CLI is signed as `com.kernoeb.xummary.cli`, in `~/.local/bin` and inside the app alike, so one grant covers both. Never regenerate the certificate: a new key is a new identity once more. None of this satisfies Gatekeeper, which needs a paid Developer ID and notarization. `install.sh` avoids Gatekeeper because `curl` sets no quarantine flag; a browser download needs `xattr -dr com.apple.quarantine`.
+**Signing** — `build.sh` signs ad hoc by default, so every local rebuild is a new identity to TCC and the Keychain, and macOS asks again for permissions. Releases sign with one self-signed certificate (`XUMMARY_SIGN_IDENTITY`, made once by `scripts/make-signing-cert.sh`, see Releases). Its designated requirement is `identifier and certificate leaf`, not the binary hash, so a "Always Allow" on the browser's Safe Storage key survives updates. The CLI is signed as `com.kernoeb.xummary.cli`, in `~/.local/bin` and inside the app alike, so one grant covers both. Never regenerate the certificate: a new key is a new identity once more. None of this satisfies Gatekeeper, which needs a paid Developer ID and notarization. `install.sh` avoids Gatekeeper because `curl` sets no quarantine flag; a browser download needs `xattr -dr com.apple.quarantine`.
 
 **The app reconciles a refresh story by story** (`Markdown.reconcile`, `macos/Sources/Xummary/Runner.swift`). A briefing is a list of `Story`, not one string, and a refresh lays the arriving stories over the ones on screen so a section that has not changed never moves. Three things make it work, and each one broke first:
 
