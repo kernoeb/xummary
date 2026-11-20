@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints the notes for a GitHub release: the changes since the previous tag, then how to install.
 #   scripts/release-notes.sh v0.2.0 > notes.md
-# The changes come from conventional commit subjects. docs, test, ci and chore are left out.
+# The changes come from conventional commit subjects; docs, test, ci and chore are left out.
 set -euo pipefail
 
 tag="${1:?usage: release-notes.sh <tag>}"
@@ -24,20 +24,22 @@ section() {
     fi
 }
 
-echo "## What changed"
-echo
-if [ -z "$previous" ]; then
-    echo "First release."
+# docs/releases/<tag>.md, when it exists, replaces the commit list. A first release needs
+# one: its history is fixes to things nobody ever had.
+intro="$(git rev-parse --show-toplevel)/docs/releases/$tag.md"
+if [ -f "$intro" ]; then
+    cat "$intro"
+else
+    echo "## What changed"
     echo
+    section "New" feat
+    section "Faster" perf
+    section "Fixes" fix
 fi
-section "New" feat
-section "Faster" perf
-section "Fixes" fix
 
 if [ -n "$previous" ]; then
+    echo
     echo "All commits: https://github.com/$repo/compare/$previous...$tag"
-else
-    echo "All commits: https://github.com/$repo/commits/$tag"
 fi
 
 cat <<EOF

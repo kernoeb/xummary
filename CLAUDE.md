@@ -50,7 +50,7 @@ gh run watch "$(gh run list --workflow release.yml --limit 1 --json databaseId -
 - **The asset names carry no version**: `Xummary-macos-arm64.zip`, `xummary-cli-macos-arm64.tar.gz`, `SHA256SUMS`. `install.sh` fetches `releases/latest/download/<name>`, so renaming one breaks every install command already in someone's history.
 - **Apple silicon only.** The runner is arm64. An Intel build needs a second Rust target, `lipo`, and a universal Swift build, which puts the binary somewhere else than `build.sh` expects.
 - **The certificate is not in the repo.** It lives in `~/.config/xummary/signing/` on the maintainer's Mac, and in the `XUMMARY_CERT_P12_BASE64` and `XUMMARY_CERT_PASSWORD` secrets. Without them the workflow still releases, signed ad hoc, with a warning in the run summary.
-- **The notes are generated** by `scripts/release-notes.sh <tag>`: `feat`, `perf` and `fix` commits since the previous tag, then how to install. Commit subjects become the changelog, so write them for a user. A release created by hand on GitHub keeps its own notes.
+- **The notes are generated** by `scripts/release-notes.sh <tag>`: `feat`, `perf` and `fix` commits since the previous tag, then how to install. Commit subjects become the changelog, so write them for a user. `docs/releases/<tag>.md`, when it exists, replaces the commit list: v0.1.0 has one, because a first release's history is fixes to things nobody ever had. A release created by hand on GitHub keeps its own notes.
 - **A manual run** (`workflow_dispatch`) builds and keeps the files as a workflow artifact. Only a tag publishes.
 
 **Fast check that fetching still works, without spending tokens on a summary:**
